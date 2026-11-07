@@ -26,15 +26,16 @@ jobs:
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
 
       - name: Compilar aplicativo
         run: |
           unzip "quebra cabeça.zip" -d projeto
-          gradle -p projeto/QuebraCabeca assembleDebug
+          gradle -p projeto/QuebraCabeca assembleDebug --stacktrace
 
       - name: Salvar APK
         uses: actions/upload-artifact@v4
         with:
           name: QuebraCabeca-APK
           path: projeto/QuebraCabeca/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
