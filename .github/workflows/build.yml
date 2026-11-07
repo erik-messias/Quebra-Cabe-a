@@ -48,10 +48,23 @@ jobs:
           path: projeto/QuebraCabeca/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Publicar versão (Release)
+      - name: Preparar APK
+        run: cp projeto/QuebraCabeca/app/build/outputs/apk/debug/app-debug.apk QuebraCabeca.apk
+
+      - name: Apagar versões anteriores
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for t in $(gh release list --json tagName -q '.[].tagName'); do
+            gh release delete "$t" --cleanup-tag -y
+          done
+
+      - name: Publicar APK (substitui o anterior)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}
-          name: Quebra-Cabeça v${{ github.run_number }}
-          body: APK de debug gerado automaticamente. Baixe o app-debug.apk abaixo e instale no celular.
-          files: projeto/QuebraCabeca/app/build/outputs/apk/debug/app-debug.apk
+          tag_name: latest
+          target_commitish: ${{ github.sha }}
+          name: Quebra-Cabeça
+          body: ""
+          make_latest: true
+          files: QuebraCabeca.apk
