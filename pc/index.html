@@ -160,6 +160,7 @@ input[type=checkbox].sw:checked::after{left:21px}
     <button id="gArr" title="Arrumar nas bordas (G)">▦</button>
     <button id="gHint" title="Dica (H) — 5 moedas">💡</button>
     <button id="gShop" title="Loja">🛍</button>
+    <button id="gExit" title="Sair do puzzle">✕</button>
   </div>
   <button id="showhud" title="Mostrar botões">▼</button>
 </div>
@@ -187,6 +188,8 @@ input[type=checkbox].sw:checked::after{left:21px}
   <div class="acts"><button id="setOk">Fechar</button></div>
 </div></div>
 <div class="modal" id="mMsg"><div class="box"><h3 id="msgT"></h3><div id="msgB" style="white-space:pre-line"></div><div class="acts" id="msgA"></div></div></div>
+<div class="modal" id="vidprog"><div class="box"><h3>Criando o vídeo do puzzle…</h3><div id="vidT">0%</div><div class="acts"><button class="ghost" id="vidSkip">Pular</button></div></div></div>
+<div class="modal" id="mVid"><div class="box"><video id="vid" controls style="max-width:80vw;max-height:68vh;border-radius:12px"></video><div class="acts"><button class="ghost" id="vDel">Apagar vídeo</button><button class="tonal" id="vDl">Baixar</button><button id="vClose">Fechar</button></div></div></div>
 <div id="loading">Preparando as peças…</div>
 <div id="toast"></div>
 <input type="file" id="file" accept="image/*" hidden><input type="file" id="fileImp" accept=".qcp,application/json" hidden>
@@ -481,6 +484,7 @@ async function homeDrawer(){
     '-',
     {ic:'⚙',t:'Configurações',f:()=>$('#mSet').classList.add('on')},
     {ic:'⛶',t:'Tela cheia (F11)',f:toggleFullscreen},
+    ...(/Electron/.test(navigator.userAgent)?[{ic:'⏻',t:'Fechar o programa',f:()=>window.close()}]:[]),
   ]);
 }
 $('#hBurger').onclick=homeDrawer;$('#hShop').onclick=showShop;
@@ -507,16 +511,24 @@ async function showGallery(){
   for(const p of all){
     const d=document.createElement('div');d.className='hist';
     d.innerHTML=`<img src="${p.thumb}"><b>${new Date(p.updated).toLocaleDateString('pt-BR',{day:'numeric',month:'long',year:'numeric'})}</b><span style="color:var(--mut)">${p.count} peças · ${fmtTime(p.elapsed||0)}</span>`;
-    d.onclick=()=>message('O que fazer?','',[{t:'Cancelar',ghost:1},{t:'Apagar',ghost:1,f:async()=>{await DB.del(p.id);showGallery()}},{t:'Jogar de novo',f:()=>Game.again(p)}]);
+    d.onclick=()=>message('O que fazer?','',[{t:'Cancelar',ghost:1},{t:'Apagar',ghost:1,f:async()=>{await DB.del(p.id);showGallery()}},...(p.video?[{t:'Ver vídeo',f:()=>playVideo(p)}]:[]),{t:'Jogar de novo',f:()=>Game.again(p)}]);
     l.appendChild(d);
   }
 }
 
+/* ---- vídeo */
+function playVideo(r){
+  const v=$('#vid'),url=URL.createObjectURL(r.video);v.src=url;$('#mVid').classList.add('on');v.play().catch(()=>{});
+  const close=()=>{v.pause();v.removeAttribute('src');v.load();URL.revokeObjectURL(url);$('#mVid').classList.remove('on')};
+  $('#vClose').onclick=close;
+  $('#vDl').onclick=()=>{const a=document.createElement('a');a.href=url;a.download='quebra-cabeca.webm';a.click()};
+  $('#vDel').onclick=()=>message('Apagar o vídeo?','O puzzle continua na galeria, só o vídeo será apagado.',[{t:'Cancelar',ghost:1},{t:'Apagar',f:async()=>{r.video=null;await DB.put(r);close();toast('Vídeo apagado.')}}]);
+}
 /* ---- exportar / importar */
 const b64=blob=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(blob)});
 async function exportAll(){
   const all=await DB.all();if(!all.length)return toast('Nenhum puzzle para exportar.');
-  const out=[];for(const p of all)out.push({...p,blob:await b64(p.blob)});
+  const out=[];for(const p of all)out.push({...p,blob:await b64(p.blob),video:undefined});
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({v:1,puzzles:out,coins:Wallet.coins,owned:Wallet.owned})],{type:'application/json'}));
   a.download='meus-quebra-cabecas.qcp';a.click();toast('Arquivo salvo na pasta Downloads.');
 }
@@ -712,16 +724,16 @@ const Game=(()=>{
   }
   const isEdge=p=>p.r===0||p.c===0||p.r===rows-1||p.c===cols-1;
   const patCache={};
-  function drawTable(){
+  function drawTable(c=ctx){
     const it=SHOP.find(x=>x.id===settings.tableId&&Wallet.has(x.id));
-    ctx.fillStyle=it?it.color:(TABLE_COLORS[settings.table]||TABLE_COLORS[0]);ctx.fillRect(0,0,worldW,worldH);
+    c.fillStyle=it?it.color:(TABLE_COLORS[settings.table]||TABLE_COLORS[0]);c.fillRect(0,0,worldW,worldH);
     const pat=it?it.pat:0,r=rng(7);
-    if(pat===1){ctx.fillStyle='rgba(0,0,0,.14)';for(let y=0;y<worldH;y+=cell*.8)ctx.fillRect(0,y,worldW,cell*.05);ctx.fillStyle='rgba(255,255,255,.05)';for(let i=0;i<60;i++)ctx.fillRect(r()*worldW,r()*worldH,cell*(1+r()*3),cell*.03)}
-    else if(pat===2){ctx.fillStyle='rgba(255,255,255,.035)';for(let i=0;i<500;i++)ctx.fillRect(r()*worldW,r()*worldH,cell*.12,cell*.12)}
-    else if(pat===3){ctx.strokeStyle='rgba(90,90,110,.25)';ctx.lineWidth=cell*.03;for(let i=0;i<14;i++){ctx.beginPath();let x=r()*worldW,y=r()*worldH;ctx.moveTo(x,y);for(let k=0;k<5;k++){x+=(r()-.3)*cell*3;y+=(r()-.5)*cell*3;ctx.lineTo(x,y)}ctx.stroke()}}
-    else if(pat===4){ctx.fillStyle='#fff';for(let i=0;i<260;i++){ctx.globalAlpha=.3+r()*.7;ctx.beginPath();ctx.arc(r()*worldW,r()*worldH,cell*(.02+r()*.05),0,7);ctx.fill()}ctx.globalAlpha=1}
-    else if(pat===5){ctx.fillStyle='rgba(120,90,50,.18)';for(let i=0;i<900;i++)ctx.fillRect(r()*worldW,r()*worldH,cell*.05,cell*.05)}
-    else{ctx.fillStyle='rgba(255,255,255,.025)';for(let y=0;y<worldH;y+=cell*.9)ctx.fillRect(0,y,worldW,cell*.45)}
+    if(pat===1){c.fillStyle='rgba(0,0,0,.14)';for(let y=0;y<worldH;y+=cell*.8)c.fillRect(0,y,worldW,cell*.05);c.fillStyle='rgba(255,255,255,.05)';for(let i=0;i<60;i++)c.fillRect(r()*worldW,r()*worldH,cell*(1+r()*3),cell*.03)}
+    else if(pat===2){c.fillStyle='rgba(255,255,255,.035)';for(let i=0;i<500;i++)c.fillRect(r()*worldW,r()*worldH,cell*.12,cell*.12)}
+    else if(pat===3){c.strokeStyle='rgba(90,90,110,.25)';c.lineWidth=cell*.03;for(let i=0;i<14;i++){c.beginPath();let x=r()*worldW,y=r()*worldH;c.moveTo(x,y);for(let k=0;k<5;k++){x+=(r()-.3)*cell*3;y+=(r()-.5)*cell*3;c.lineTo(x,y)}c.stroke()}}
+    else if(pat===4){c.fillStyle='#fff';for(let i=0;i<260;i++){c.globalAlpha=.3+r()*.7;c.beginPath();c.arc(r()*worldW,r()*worldH,cell*(.02+r()*.05),0,7);c.fill()}c.globalAlpha=1}
+    else if(pat===5){c.fillStyle='rgba(120,90,50,.18)';for(let i=0;i<900;i++)c.fillRect(r()*worldW,r()*worldH,cell*.05,cell*.05)}
+    else{c.fillStyle='rgba(255,255,255,.025)';for(let y=0;y<worldH;y+=cell*.9)c.fillRect(0,y,worldW,cell*.45)}
   }
   function decoSpots(n){ // pontos na faixa externa da mesa
     const o=ringOff(ringsTotal)+cell*.2,r=rng(rec.seed^0x9e37),sp=[];
@@ -731,11 +743,11 @@ const Game=(()=>{
       sp.push([x,y])}
     return sp;
   }
-  function drawDecos(){
+  function drawDecos(c=ctx){
     const ids=Wallet.decos.filter(id=>Wallet.has(id));if(!ids.length)return;
     const sp=decoSpots(ids.length);
     ids.forEach((id,i)=>{const it=SHOP.find(x=>x.id===id),im=it&&IMG[it.img];if(!im||!im.complete)return;
-      const h=cell*2.2,w=h*im.width/im.height;ctx.globalAlpha=.95;ctx.drawImage(im,sp[i][0]-w/2,sp[i][1]-h/2,w,h);ctx.globalAlpha=1});
+      const h=cell*2.2,w=h*im.width/im.height;c.globalAlpha=.95;c.drawImage(im,sp[i][0]-w/2,sp[i][1]-h/2,w,h);c.globalAlpha=1});
   }
   const pet={t:Math.random()};
   function drawPet(now){
@@ -841,12 +853,12 @@ const Game=(()=>{
     if(drag){translate(drag.g,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(drag.g);drag.lx=rx;drag.ly=ry;drag.moved=true;redraw()}
     else if(pan){tx+=rx-pan.lx;ty+=ry-pan.ly;pan.lx=rx;pan.ly=ry;clamp();redraw()}
   });
-  function settleAfterRot(p){const res=settle(p.g);if(res)remask(res);afterChange();redraw()}
+  function settleAfterRot(p){const res=settle(p.g);if(res)remask(res);logMove();afterChange();redraw()}
   const up=()=>{
     if(drag){
       const g=drag.g,wasClick=!drag.moved;drag=null;
       if(wasClick&&rec.rotate&&g.pieces.length===1&&!g.locked){g.pieces[0].rot=(g.pieces[0].rot+1)%4;beep([400],.05)}else if(!wasClick)st.moves++;
-      const before=lockedG.pieces.length;const res=settle(g);
+      const res=settle(g);logMove();
       if(res){remask(res);beep(res.locked?[660,990]:[520],res.locked?.12:.07)}
       afterChange();redraw();
     }
@@ -865,6 +877,54 @@ const Game=(()=>{
     else if(k==='escape'){if($('#drawer').classList.contains('open'))closeDrawer();else if(hudHidden)setHud(true)}
   });
 
+  let lastPos=[],vidCancel=null;
+  function initLog(){rec.init=pieces.map(p=>[p.x,p.y,p.rot||0]);rec.log=[];lastPos=rec.init.map(a=>a.slice())}
+  function logMove(){
+    if(!rec||!rec.log)return;const ch=[];
+    pieces.forEach((p,i)=>{const l=lastPos[i],r=p.rot||0;if(Math.abs(p.x-l[0])>.01||Math.abs(p.y-l[1])>.01||r!==l[2]){ch.push([i,Math.round(p.x*10)/10,Math.round(p.y*10)/10,r]);l[0]=p.x;l[1]=p.y;l[2]=r}});
+    if(ch.length)rec.log.push(ch);
+  }
+  async function makeVideo(){
+    const log=rec.log,init=rec.init;if(!log||!log.length||!init||typeof MediaRecorder==='undefined')return null;
+    const mime=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(m=>MediaRecorder.isTypeSupported(m));if(!mime)return null;
+    const sc0=1080/Math.max(worldW,worldH),W=Math.round(worldW*sc0/2)*2,H=Math.round(worldH*sc0/2)*2;
+    const vc=document.createElement('canvas');vc.width=W;vc.height=H;const c=vc.getContext('2d');
+    const bm=pieces.map(p=>pieceBmp(p,0)),pos=init.map(a=>a.slice());
+    const stream=vc.captureStream(30),mr=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:4e6}),chunks=[];
+    mr.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+    const stopped=new Promise(r=>mr.onstop=r);
+    const dur=Math.max(.012,Math.min(.6,40/log.length)),total=log.length*dur,intro=.8,outro=2.2;
+    let cancel=false;vidCancel=()=>{cancel=true};
+    $('#vidT').textContent='0%';$('#vidprog').classList.add('on');
+    const draw=(i,x,y,ang)=>{c.save();c.translate(x+cell/2,y+cell/2);c.rotate(ang);c.drawImage(bm[i],-cell/2-margin,-cell/2-margin);c.restore()};
+    const ease=f=>f<.5?2*f*f:1-Math.pow(-2*f+2,2)/2;
+    const render=(cur,e)=>{
+      c.setTransform(1,0,0,1,0,0);c.fillStyle='#000';c.fillRect(0,0,W,H);c.scale(W/worldW,H/worldH);
+      drawTable(c);c.fillStyle='rgba(255,255,255,.06)';c.fillRect(boardX,boardY,boardW,boardH);
+      c.strokeStyle='rgba(255,255,255,.35)';c.lineWidth=2;c.strokeRect(boardX,boardY,boardW,boardH);
+      drawDecos(c);
+      const mv=new Set(cur?cur.map(a=>a[0]):[]);
+      for(let i=0;i<pos.length;i++)if(!mv.has(i))draw(i,pos[i][0],pos[i][1],pos[i][2]*Math.PI/2);
+      if(cur)for(const[i,x,y,r]of cur){const p0=pos[i],d=((r-p0[2]+6)%4)-2;draw(i,p0[0]+(x-p0[0])*e,p0[1]+(y-p0[1])*e,(p0[2]+d*e)*Math.PI/2)}
+    };
+    mr.start();const t0=performance.now();let applied=0;
+    await new Promise(res=>{
+      const tick=()=>{
+        if(cancel)return res();
+        const el=(performance.now()-t0)/1000,t=el-intro;
+        if(t>=total+outro)return res();
+        const k=Math.max(0,t)/dur,idx=Math.min(log.length,Math.floor(k));
+        while(applied<idx){for(const[i,x,y,r]of log[applied]){pos[i][0]=x;pos[i][1]=y;pos[i][2]=r}applied++}
+        render(idx<log.length?log[idx]:null,ease(k-idx));
+        $('#vidT').textContent=Math.min(100,Math.round(el/(intro+total+outro)*100))+'%';
+        setTimeout(tick,1000/30);
+      };tick();
+    });
+    mr.stop();await stopped;stream.getTracks().forEach(t=>t.stop());
+    $('#vidprog').classList.remove('on');vidCancel=null;
+    return cancel?null:new Blob(chunks,{type:'video/webm'});
+  }
+  $('#vidSkip').onclick=()=>vidCancel&&vidCancel();
   const keys=new Set();let kLast=0,kRun=false;
   const KM={w:'u',arrowup:'u',s:'d',arrowdown:'d',a:'l',arrowleft:'l',d:'r',arrowright:'r'};
   function kLoop(t){
@@ -906,7 +966,9 @@ const Game=(()=>{
     completed=true;stopClock();hint=null;
     rec.completed=true;rec.percent=100;rec.elapsed=elapsed();rec.updated=Date.now();rec.state=null;rec.stats=st;
     await DB.put(rec);beep([523,659,784],.35);const gain=Math.max(5,Math.round(pieces.length/4)+(rec.timed?10:0));Wallet.add(gain);
-    message('Parabéns! 🎉',`Você montou o quebra-cabeça em ${fmtTime(rec.elapsed)}.\nEncaixes: ${st.snaps} · Movimentos: ${st.moves} · Dicas: ${st.hints}\n+${gain} moedas 🪙`,[{t:'Ver galeria',ghost:1,f:showGallery},{t:'Novo puzzle',f:()=>show('home')}]);
+    let vid=null;try{logMove();vid=await makeVideo()}catch(e){console.error(e);$('#vidprog').classList.remove('on')}
+    if(vid){rec.video=vid;rec.log=null;rec.init=null;await DB.put(rec)}
+    message('Parabéns! 🎉',`Você montou o quebra-cabeça em ${fmtTime(rec.elapsed)}.\nEncaixes: ${st.snaps} · Movimentos: ${st.moves} · Dicas: ${st.hints}\n+${gain} moedas 🪙`,[{t:'Ver galeria',ghost:1,f:showGallery},...(vid?[{t:'Ver vídeo',f:()=>playVideo(rec)}]:[]),{t:'Novo puzzle',f:()=>show('home')}]);
     updateHud();
   }
   async function persist(){
@@ -938,7 +1000,7 @@ const Game=(()=>{
     const im=new Image();im.src=URL.createObjectURL(rec.blob);im.style.cssText='max-width:78vw;max-height:66vh;border-radius:12px;display:block';$('#msgB').appendChild(im);
     const a=$('#msgA');a.innerHTML='';const b=document.createElement('button');b.textContent='Fechar';b.onclick=()=>m.classList.remove('on');a.appendChild(b);m.classList.add('on');
   }
-  function arrangeNow(){arrange();updateHud();redraw();persist()}
+  function arrangeNow(){arrange();logMove();updateHud();redraw();persist()}
   function useHint(){
     if(completed)return;if(Wallet.coins<HINT_COST)return toast('Dica custa '+HINT_COST+' moedas. Conclua puzzles para ganhar mais.');let best=null;
     for(const p of pieces)for(const[dr,dc]of NB){
@@ -962,7 +1024,7 @@ const Game=(()=>{
   async function reset(){
     stopClock();elapsedBase=0;completed=false;timeUpShown=false;st.moves=st.snaps=st.hints=0;
     for(const p of pieces){p.rot=0;p.x=boardX+p.c*cell;p.y=boardY+p.r*cell;p.mask=0;p.bmp=pieceBmp(p,0)}
-    makeSingles();settings.arrange?arrange():scatter();randomRot();rec.state=null;rec.completed=false;rec.timed=rec.timed;
+    makeSingles();settings.arrange?arrange():scatter();randomRot();initLog();rec.video=null;rec.state=null;rec.completed=false;rec.timed=rec.timed;
     fit();updateHud();startClock();redraw();persist();
   }
   function setHud(v){hudHidden=!v;$('#hud').style.display=v?'flex':'none';$('#prog').style.display=v?'block':'none';$('#showhud').style.display=v?'none':'block';updateHud()}
@@ -972,6 +1034,7 @@ const Game=(()=>{
     openDrawer([
       {html:`<div class="dhead">Quebra-Cabeça</div>`},
       {ic:'←',t:'Voltar para a biblioteca',f:async()=>{await persist();showLibrary()}},
+      {ic:'✕',t:'Sair do puzzle',f:()=>show('home')},
       {ic:'💾',t:'Salvar posição',f:async()=>{await persist();toast('Posição salva.')}},
       {ic:'🖼',t:'Ver imagem completa (P)',f:preview},
       {ic:'📈',t:'Estatísticas',f:showStats},
@@ -990,6 +1053,7 @@ const Game=(()=>{
       {ic:'⚙',t:'Configurações',f:()=>$('#mSet').classList.add('on')},
     ]);
   }
+  $('#gExit').onclick=()=>message('Sair do puzzle?','Seu progresso fica salvo na biblioteca.',[{t:'Cancelar',ghost:1},{t:'Sair',f:()=>show('home')}]);
   $('#gShop').onclick=async()=>{await persist();showShop()};$('#gMenu').onclick=menu;$('#gArr').onclick=arrangeNow;$('#gHint').onclick=useHint;
 
   /* ---- ciclo de vida */
@@ -1004,7 +1068,7 @@ const Game=(()=>{
       makeSingles();
       st.moves=rec.stats?.moves||0;st.snaps=rec.stats?.snaps||0;st.hints=rec.stats?.hints||0;
       elapsedBase=rec.elapsed||0;runStart=0;completed=false;timeUpShown=false;edgesOnly=false;showGhost=true;hint=null;
-      if(!(rec.state&&restore(rec.state))){makeSingles();settings.arrange?arrange():scatter();randomRot()}
+      if(rec.state&&restore(rec.state)){if(rec.log&&rec.init)lastPos=pieces.map(p=>[p.x,p.y,p.rot||0]);else rec.log=null}else{makeSingles();settings.arrange?arrange():scatter();randomRot();initLog()}
       setHud(true);fit();updateHud();startClock();
       clearInterval(tickT);tickT=setInterval(()=>{if(active&&!completed){updateHud()}},1000);
       clearInterval(saveT);saveT=setInterval(()=>persist(),12000);
