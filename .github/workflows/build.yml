@@ -1,5 +1,5 @@
 
-name: Compilar APK Android
+name: Compilar APK e Windows
 
 on:
   workflow_dispatch:
@@ -7,13 +7,14 @@ on:
     branches: [main]
     paths:
       - "quebra cabeça.zip"
+      - "pc/**"
       - ".github/workflows/build.yml"
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  android:
     runs-on: ubuntu-latest
 
     steps:
@@ -48,9 +49,39 @@ jobs:
           path: projeto/QuebraCabeca/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Preparar APK
-        run: cp projeto/QuebraCabeca/app/build/outputs/apk/debug/app-debug.apk QuebraCabeca.apk
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Compilar programa Windows
+        working-directory: pc
+        run: |
+          npm install
+          npx electron-builder --win portable --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuebraCabeca-Windows
+          path: pc/dist/QuebraCabeca-Windows.exe
+          if-no-files-found: error
 
+  release:
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: QuebraCabeca-APK
+          path: out
+      - uses: actions/download-artifact@v4
+        with:
+          name: QuebraCabeca-Windows
+          path: out
+      - name: Preparar arquivos
+        run: mv out/app-debug.apk out/QuebraCabeca.apk && mkdir site && cp pc/index.html site/QuebraCabeca-Navegador.html && cp site/QuebraCabeca-Navegador.html out/
       - name: Apagar versões anteriores
         env:
           GH_TOKEN: ${{ github.token }}
@@ -58,8 +89,7 @@ jobs:
           for t in $(gh release list --json tagName -q '.[].tagName'); do
             gh release delete "$t" --cleanup-tag -y
           done
-
-      - name: Publicar APK (substitui o anterior)
+      - name: Publicar (substitui o anterior)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
@@ -67,4 +97,7 @@ jobs:
           name: Quebra-Cabeça
           body: ""
           make_latest: true
-          files: QuebraCabeca.apk
+          files: |
+            out/QuebraCabeca.apk
+            out/QuebraCabeca-Windows.exe
+            out/QuebraCabeca-Navegador.html

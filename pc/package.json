@@ -1,0 +1,16 @@
+{
+  "name": "quebra-cabeca",
+  "version": "1.0.0",
+  "description": "Quebra-Cabeça",
+  "main": "main.js",
+  "author": "Erik",
+  "license": "MIT",
+  "build": {
+    "appId": "com.erik.quebracabeca",
+    "productName": "QuebraCabeca",
+    "files": ["main.js","index.html"],
+    "win": {"target": "portable"},
+    "portable": {"artifactName": "QuebraCabeca-Windows.exe"}
+  },
+  "devDependencies": {"electron": "33.2.1", "electron-builder": "25.1.8"}
+}
