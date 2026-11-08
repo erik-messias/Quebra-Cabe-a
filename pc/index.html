@@ -577,29 +577,45 @@ const Game=(()=>{
     const side=cell+2*margin;
     for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
       const path=geo.pathFor(r,c);
-      pieces.push({r,c,i:r*cols+c,x:boardX+c*cell,y:boardY+r*cell,path,bmp:null,plain:false,g:null});
+      const x0=c*cell,y0=r*cell,sd=[new Path2D(),new Path2D(),new Path2D(),new Path2D()];
+      sd[0].moveTo(x0,y0);r===0?sd[0].lineTo(x0+cell,y0):geo.fwd(sd[0],geo.h[r][c]);
+      sd[1].moveTo(x0+cell,y0);c===cols-1?sd[1].lineTo(x0+cell,y0+cell):geo.fwd(sd[1],geo.v[r][c+1]);
+      sd[2].moveTo(x0+cell,y0+cell);r===rows-1?sd[2].lineTo(x0,y0+cell):geo.bwd(sd[2],geo.h[r+1][c]);
+      sd[3].moveTo(x0,y0+cell);c===0?sd[3].lineTo(x0,y0):geo.bwd(sd[3],geo.v[r][c]);
+      pieces.push({r,c,i:r*cols+c,x:boardX+c*cell,y:boardY+r*cell,path,sd,bmp:null,mask:0,g:null});
     }
     // bitmaps em lotes para não travar a tela
     for(let i=0;i<pieces.length;i+=60){
-      for(const p of pieces.slice(i,i+60))p.bmp=pieceBmp(p,false);
+      for(const p of pieces.slice(i,i+60))p.bmp=pieceBmp(p,0);
       $('#loading').textContent=`Preparando as peças… ${Math.min(100,Math.round(i*100/pieces.length))}%`;
       await new Promise(r=>setTimeout(r,0));
     }
     return k;
   }
-  function pieceBmp(p,plain){
+  function pieceBmp(p,mask){
     const side=cell+2*margin,b=document.createElement('canvas');b.width=b.height=side;
     const x=b.getContext('2d');x.translate(margin-p.c*cell,margin-p.r*cell);
     x.save();x.clip(p.path);x.drawImage(scaled,0,0);x.restore();
-    if(!plain){
-      x.lineJoin='round';
-      x.lineWidth=Math.max(1.4,cell*.026);x.strokeStyle='rgba(0,0,0,.38)';x.stroke(p.path);
-      x.save();x.clip(p.path);x.lineWidth=Math.max(1,cell*.02);x.strokeStyle='rgba(255,255,255,.28)';x.stroke(p.path);x.restore();
+    if(mask!==15){
+      x.lineJoin='round';x.lineCap='round';
+      const free=p.sd.filter((_,k)=>!(mask&(1<<k)));
+      x.lineWidth=Math.max(1.4,cell*.026);x.strokeStyle='rgba(0,0,0,.38)';for(const f of free)x.stroke(f);
+      x.save();x.clip(p.path);x.lineWidth=Math.max(1,cell*.02);x.strokeStyle='rgba(255,255,255,.28)';for(const f of free)x.stroke(f);x.restore();
     }
     return b;
   }
 
   /* ---- grupos e posições */
+  function remask(g){
+    for(const p of g.pieces){
+      let m=0;
+      if(g.locked)m=15;else{
+        [[p.r-1,p.c],[p.r,p.c+1],[p.r+1,p.c],[p.r,p.c-1]].forEach(([rr,cc],k)=>{
+          if(rr<0||cc<0||rr>=rows||cc>=cols)return;if(pieces[rr*cols+cc].g===g)m|=1<<k});
+      }
+      if(m!==p.mask){p.mask=m;p.bmp=pieceBmp(p,m)}
+    }
+  }
   function makeSingles(){groups=[];for(const p of pieces){const g={pieces:[p],locked:false};p.g=g;groups.push(g)}lockedG={pieces:[],locked:true}}
   const solvedX=p=>boardX+p.c*cell, solvedY=p=>boardY+p.r*cell;
   function lockGroup(g){ // gruda no tabuleiro
@@ -680,7 +696,7 @@ const Game=(()=>{
 
   /* ---- desenho */
   function resize(){const d=devicePixelRatio||1;cv.width=cv.clientWidth*d;cv.height=cv.clientHeight*d;dirty=true}
-  addEventListener('resize',()=>{if(active)resize()});
+  new ResizeObserver(()=>{if(active&&cv.clientWidth){resize();fit();redraw()}}).observe(cv);
   function fit(){const W=cv.clientWidth,H=cv.clientHeight;scale=Math.min(W/worldW,H/worldH);minScale=Math.min(scale*.8,.4);tx=(W-worldW*scale)/2;ty=(H-worldH*scale)/2;dirty=true}
   function clamp(){
     const W=cv.clientWidth,H=cv.clientHeight,sw=worldW*scale,sh=worldH*scale,slack=Math.min(W,H)*.25;
@@ -730,7 +746,7 @@ const Game=(()=>{
   function frame(){
     raf=0;if(!active)return;
     const d=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight,now=performance.now();
-    ctx.setTransform(d,0,0,d,0,0);ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+    ctx.setTransform(d,0,0,d,0,0);{const it0=SHOP.find(x=>x.id===settings.tableId&&Wallet.has(x.id));ctx.fillStyle=it0?it0.color:(TABLE_COLORS[settings.table]||TABLE_COLORS[0]);ctx.fillRect(0,0,W,H)}
     ctx.save();ctx.translate(tx,ty);ctx.scale(scale,scale);
     drawTable();drawDecos();
     // grão leve da mesa
@@ -743,7 +759,7 @@ const Game=(()=>{
     const draw=(g)=>{
       for(const p of g.pieces){
         if(p.x>vr||p.y>vb||p.x+cell<vl||p.y+cell<vt)continue;
-        if(g.locked&&!p.plain){p.bmp=pieceBmp(p,true);p.plain=true}
+        if(g.locked&&p.mask!==15){p.mask=15;p.bmp=pieceBmp(p,15)}
         const dim=edgesOnly&&!g.locked&&!isEdge(p);
         if(dim)ctx.globalAlpha=.18;
         if(g===(drag&&drag.g)){ctx.shadowColor='rgba(0,0,0,.55)';ctx.shadowBlur=18/scale*scale;ctx.shadowOffsetY=6}
@@ -800,7 +816,7 @@ const Game=(()=>{
         let g=p.g;
         if(g.locked){ // destravar (config. "travar" desligada)
           g.locked=false;const ng={pieces:[...g.pieces],locked:false};g.pieces=[];for(const q of ng.pieces)q.g=ng;lockedG={pieces:[],locked:true};groups=groups.filter(x=>x!==g);groups.push(ng);g=ng;
-          for(const q of g.pieces)if(q.plain){q.bmp=pieceBmp(q,false);q.plain=false}
+          remask(g);
         }
         groups=groups.filter(x=>x!==g);groups.push(g);
         drag={g,lx:rx,ly:ry,moved:false};redraw();return;
@@ -817,7 +833,7 @@ const Game=(()=>{
     if(drag){
       const g=drag.g;drag=null;if(drag===null&&g)st.moves++;
       const before=lockedG.pieces.length;const res=settle(g);
-      if(res){beep(res.locked?[660,990]:[520],res.locked?.12:.07)}
+      if(res){remask(res);beep(res.locked?[660,990]:[520],res.locked?.12:.07)}
       afterChange();redraw();
     }
     pan=null;
@@ -882,6 +898,7 @@ const Game=(()=>{
         if(!g.l)groups.push(ng);
       }
       for(const p of pieces)if(!p.g)return false;
+      for(const g of groups)remask(g);
       return true;
     }catch(e){return false}
   }
@@ -915,7 +932,7 @@ const Game=(()=>{
   }
   async function reset(){
     stopClock();elapsedBase=0;completed=false;timeUpShown=false;st.moves=st.snaps=st.hints=0;
-    for(const p of pieces){p.x=boardX+p.c*cell;p.y=boardY+p.r*cell;p.plain=false;p.bmp=pieceBmp(p,false)}
+    for(const p of pieces){p.x=boardX+p.c*cell;p.y=boardY+p.r*cell;p.mask=0;p.bmp=pieceBmp(p,0)}
     makeSingles();settings.arrange?arrange():scatter();rec.state=null;rec.completed=false;rec.timed=rec.timed;
     fit();updateHud();startClock();redraw();persist();
   }
