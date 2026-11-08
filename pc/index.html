@@ -36,7 +36,7 @@ input[type=checkbox].sw:checked::after{left:21px}
 .burger{width:46px;height:46px;border-radius:14px;padding:0;font-size:22px}
 .top h1{margin:0;font-size:24px;color:var(--pri)}
 .top small{display:block;color:var(--mut);font-weight:400;font-size:13px}
-.coinbox{margin-left:auto}
+
 .stage{flex:1;min-height:0;width:100%;max-width:1100px;display:flex;gap:20px}
 .pv{flex:1;min-width:0;background:var(--card);border-radius:24px;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .pv canvas{max-width:100%;max-height:100%}
@@ -109,7 +109,7 @@ input[type=checkbox].sw:checked::after{left:21px}
 <div id="home" class="screen on">
   <div class="top">
     <button class="burger" id="hBurger" title="Menu">☰</button>
-    <h1>Quebra-Cabeça<small>Escolha uma imagem e monte do seu jeito</small></h1><span class="coin coinbox" id="hCoins"></span>
+    <h1>Quebra-Cabeça<small>Escolha uma imagem e monte do seu jeito</small></h1><button class="tonal" id="hShop" style="margin-left:auto">🛍 Loja</button><span class="coin" id="hCoins"></span>
   </div>
   <div class="stage">
     <div class="pv" id="pv">
@@ -124,6 +124,7 @@ input[type=checkbox].sw:checked::after{left:21px}
       </div>
       <div class="cnt" id="cnt">48 peças</div>
       <input type="range" id="count" min="0" max="13" value="3">
+      <label class="row">Começar com peças giradas <input type="checkbox" class="sw" id="rotate"></label>
       <label class="row">Contra o relógio <input type="checkbox" class="sw" id="timed"></label>
       <div class="btns">
         <button class="tonal" id="bPick">Escolher imagem</button>
@@ -156,8 +157,9 @@ input[type=checkbox].sw:checked::after{left:21px}
   <div id="pill"></div>
   <div class="hud" id="hud">
     <button id="gMenu" title="Menu">☰</button>
-    <button id="gArr" title="Arrumar nas bordas (A)">▦</button>
-    <button id="gHint" title="Dica (H)">💡</button>
+    <button id="gArr" title="Arrumar nas bordas (G)">▦</button>
+    <button id="gHint" title="Dica (H) — 5 moedas">💡</button>
+    <button id="gShop" title="Loja">🛍</button>
   </div>
   <button id="showhud" title="Mostrar botões">▼</button>
 </div>
@@ -181,6 +183,7 @@ input[type=checkbox].sw:checked::after{left:21px}
   <div class="setrow"><div>Travar peças no lugar<small>Peças encaixadas no tabuleiro não saem mais.</small></div><input type="checkbox" class="sw" data-k="lock"></div>
   <div class="setrow"><div>Arrumar nas bordas ao abrir<small>Desligado: começam espalhadas.</small></div><input type="checkbox" class="sw" data-k="arrange"></div>
   <div class="setrow"><div>Som das peças<small>Um "plim" ao encaixar.</small></div><input type="checkbox" class="sw" data-k="sound"></div>
+  <div class="setrow"><div>Volume<small id="volT"></small></div><input type="range" id="vol" min="0" max="100" style="width:160px;accent-color:var(--pri)"></div>
   <div class="acts"><button id="setOk">Fechar</button></div>
 </div></div>
 <div class="modal" id="mMsg"><div class="box"><h3 id="msgT"></h3><div id="msgB" style="white-space:pre-line"></div><div class="acts" id="msgA"></div></div></div>
@@ -198,7 +201,7 @@ const store = {
   get(k,d){try{const v=localStorage.getItem('qc_'+k);return v===null?d:JSON.parse(v)}catch(e){return d}},
   set(k,v){try{localStorage.setItem('qc_'+k,JSON.stringify(v))}catch(e){}}
 };
-const settings = Object.assign({lock:true,arrange:true,sound:true,showTime:true,ghost:18,table:0}, store.get('settings',{}));
+const settings = Object.assign({volume:70,lock:true,arrange:true,sound:true,showTime:true,ghost:18,table:0}, store.get('settings',{}));
 const saveSettings = () => store.set('settings', settings);
 let toastT; function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toastT);toastT=setTimeout(()=>e.style.display='none',2600)}
 function fmtTime(ms){const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;const p=n=>String(n).padStart(2,'0');return h?`${h}:${p(m)}:${p(x)}`:`${p(m)}:${p(x)}`}
@@ -209,10 +212,10 @@ function message(title,body,buttons){
 }
 function rng(seed){let a=seed>>>0;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 function beep(freqs,dur){
-  if(!settings.sound)return;
+  if(!settings.sound||settings.volume<=0)return;
   try{
     const ac=beep.ac||(beep.ac=new (window.AudioContext||window.webkitAudioContext)());
-    const g=ac.createGain();g.gain.setValueAtTime(.18,ac.currentTime);g.gain.exponentialRampToValueAtTime(.0008,ac.currentTime+dur);g.connect(ac.destination);
+    const g=ac.createGain();g.gain.setValueAtTime(.26*settings.volume/100,ac.currentTime);g.gain.exponentialRampToValueAtTime(.0008,ac.currentTime+dur);g.connect(ac.destination);
     for(const f of freqs){const o=ac.createOscillator();o.frequency.setValueAtTime(f,ac.currentTime);o.frequency.linearRampToValueAtTime(f*1.25,ac.currentTime+dur);o.connect(g);o.start();o.stop(ac.currentTime+dur)}
   }catch(e){}
 }
@@ -382,6 +385,7 @@ function refreshPreview(){
 $$('.shape').forEach(el=>el.onclick=()=>{S.style=+el.dataset.s;store.set('style',S.style);refreshPreview()});
 $('#count').oninput=()=>{store.set('count',currentCount());refreshPreview()};
 $('#timed').onchange=e=>store.set('timed',e.target.checked);
+$('#rotate').onchange=e=>store.set('rotate',e.target.checked);
 window.addEventListener('resize',()=>{if($('#home').classList.contains('on'))refreshPreview()});
 
 /* ---- importar imagem */
@@ -479,8 +483,9 @@ async function homeDrawer(){
     {ic:'⛶',t:'Tela cheia (F11)',f:toggleFullscreen},
   ]);
 }
-$('#hBurger').onclick=homeDrawer;
+$('#hBurger').onclick=homeDrawer;$('#hShop').onclick=showShop;
 function toggleFullscreen(){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen().catch(()=>{})}
+(()=>{const v=$('#vol'),t=$('#volT');v.value=settings.volume;t.textContent=settings.volume+'%';v.oninput=()=>{settings.volume=+v.value;t.textContent=v.value+'%';saveSettings()};v.onchange=()=>beep([660,990],.12)})();
 $('#setOk').onclick=()=>$('#mSet').classList.remove('on');
 $$('#mSet [data-k]').forEach(c=>{c.checked=!!settings[c.dataset.k];c.onchange=()=>{settings[c.dataset.k]=c.checked;saveSettings()}});
 
@@ -531,11 +536,11 @@ function makeThumb(img,max=360){const s=Math.min(1,max/Math.max(img.width,img.he
 $('#bStart').onclick=async()=>{
   if(!S.img)return;
   const [rows,cols]=gridFor(currentCount(),S.img.width,S.img.height);
-  const rec={id:String(Date.now()),blob:S.imgBlob,thumb:makeThumb(S.img),count:rows*cols,style:S.style,seed:S.seed,timed:$('#timed').checked,
+  const rec={id:String(Date.now()),blob:S.imgBlob,thumb:makeThumb(S.img),count:rows*cols,style:S.style,seed:S.seed,timed:$('#timed').checked,rotate:$('#rotate').checked,
     percent:0,completed:false,elapsed:0,updated:Date.now(),state:null,stats:{moves:0,snaps:0,hints:0}};
   await DB.put(rec);Game.open(rec.id);
 };
-S.style=store.get('style',1);$('#count').value=Math.max(0,COUNTS.indexOf(store.get('count',48)));$('#timed').checked=store.get('timed',false);
+S.style=store.get('style',1);$('#count').value=Math.max(0,COUNTS.indexOf(store.get('count',48)));$('#timed').checked=store.get('timed',false);$('#rotate').checked=store.get('rotate',false);
 
 /* ============================================================ JOGO */
 const Game=(()=>{
@@ -582,7 +587,7 @@ const Game=(()=>{
       sd[1].moveTo(x0+cell,y0);c===cols-1?sd[1].lineTo(x0+cell,y0+cell):geo.fwd(sd[1],geo.v[r][c+1]);
       sd[2].moveTo(x0+cell,y0+cell);r===rows-1?sd[2].lineTo(x0,y0+cell):geo.bwd(sd[2],geo.h[r+1][c]);
       sd[3].moveTo(x0,y0+cell);c===0?sd[3].lineTo(x0,y0):geo.bwd(sd[3],geo.v[r][c]);
-      pieces.push({r,c,i:r*cols+c,x:boardX+c*cell,y:boardY+r*cell,path,sd,bmp:null,mask:0,g:null});
+      pieces.push({r,c,i:r*cols+c,rot:0,x:boardX+c*cell,y:boardY+r*cell,path,sd,bmp:null,mask:0,g:null});
     }
     // bitmaps em lotes para não travar a tela
     for(let i=0;i<pieces.length;i+=60){
@@ -642,6 +647,7 @@ const Game=(()=>{
     }
     dirty=true;
   }
+  function randomRot(){for(const g of groups)if(!g.locked&&g.pieces.length===1)g.pieces[0].rot=rec.rotate?(Math.random()*4|0):0}
   function scatter(){
     for(const g of groups){if(g.locked)continue;for(let t=0;t<30;t++){const x=Math.random()*(worldW-cell),y=Math.random()*(worldH-cell);
       const inB=x+cell>boardX&&x<boardX+boardW&&y+cell>boardY&&y<boardY+boardH;if(!inB||t===29){const p=g.pieces[0];translate(g,x-p.x,y-p.y);break}}}
@@ -655,6 +661,7 @@ const Game=(()=>{
       // 1) no tabuleiro
       if(!g.locked){
         for(const p of g.pieces){
+          if(p.rot)continue;
           if(Math.hypot(p.x-solvedX(p),p.y-solvedY(p))<cell*.28){
             const dx=solvedX(p)-p.x,dy=solvedY(p)-p.y;translate(g,dx,dy);
             g.locked=true;
@@ -667,7 +674,7 @@ const Game=(()=>{
       // 2) com vizinhas de outro grupo
       outer:for(const p of g.pieces)for(const[dr,dc]of NB){
         const rr=p.r+dr,cc=p.c+dc;if(rr<0||cc<0||rr>=rows||cc>=cols)continue;
-        const q=pieces[rr*cols+cc];if(q.g===g)continue;
+        const q=pieces[rr*cols+cc];if(q.g===g||p.rot||q.rot)continue;
         const ex=p.x+dc*cell,ey=p.y+dr*cell;
         if(Math.hypot(q.x-ex,q.y-ey)<cell*.28){
           const dx=q.x-ex,dy=q.y-ey;
@@ -742,7 +749,10 @@ const Game=(()=>{
     ctx.save();ctx.translate(x,y+bob);ctx.scale(dir,1);ctx.rotate(Math.sin(now/130)*.06);ctx.drawImage(im,-w/2,-h,w,h);ctx.restore();
     return true;
   }
-  function drawPiece(c,p,dx=0,dy=0){c.drawImage(p.bmp,p.x+dx-margin,p.y+dy-margin)}
+  function drawPiece(c,p,dx=0,dy=0){
+    if(!p.rot){c.drawImage(p.bmp,p.x+dx-margin,p.y+dy-margin);return}
+    c.save();c.translate(p.x+dx+cell/2,p.y+dy+cell/2);c.rotate(p.rot*Math.PI/2);c.drawImage(p.bmp,-cell/2-margin,-cell/2-margin);c.restore();
+  }
   function frame(){
     raf=0;if(!active)return;
     const d=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight,now=performance.now();
@@ -797,7 +807,8 @@ const Game=(()=>{
       const g=groups[gi];if(g.locked&&settings.lock)continue;
       for(const p of g.pieces){
         if(edgesOnly&&!g.locked&&!isEdge(p))continue;
-        const lx=wx-p.x+p.c*cell,ly=wy-p.y+p.r*cell;
+        let lx=wx-p.x+p.c*cell,ly=wy-p.y+p.r*cell;
+        if(p.rot){const ux=wx-(p.x+cell/2),uy=wy-(p.y+cell/2),cs=[1,0,-1,0][p.rot],sn=[0,1,0,-1][p.rot];lx=ux*cs+uy*sn+cell/2+p.c*cell;ly=-ux*sn+uy*cs+cell/2+p.r*cell}
         if(lx<-margin||ly<-margin||lx>(p.c+1)*cell+margin||ly>(p.r+1)*cell+margin)continue;
         if(hit.isPointInPath(p.path,lx+p.c*0,ly+p.r*0))return p;
       }
@@ -810,6 +821,7 @@ const Game=(()=>{
     if(!active)return;cv.setPointerCapture(e.pointerId);
     hint=null;
     const rx=e.offsetX,ry=e.offsetY;
+    if(e.button===2){const [wx,wy]=toWorld(rx,ry),p=pieceAt(wx,wy);if(p&&rec.rotate&&p.g.pieces.length===1&&!p.g.locked){p.rot=(p.rot+3)%4;settleAfterRot(p);}return}
     if(e.button===0){
       const [wx,wy]=toWorld(rx,ry),p=pieceAt(wx,wy);
       if(p){
@@ -829,9 +841,11 @@ const Game=(()=>{
     if(drag){translate(drag.g,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(drag.g);drag.lx=rx;drag.ly=ry;drag.moved=true;redraw()}
     else if(pan){tx+=rx-pan.lx;ty+=ry-pan.ly;pan.lx=rx;pan.ly=ry;clamp();redraw()}
   });
+  function settleAfterRot(p){const res=settle(p.g);if(res)remask(res);afterChange();redraw()}
   const up=()=>{
     if(drag){
-      const g=drag.g;drag=null;if(drag===null&&g)st.moves++;
+      const g=drag.g,wasClick=!drag.moved;drag=null;
+      if(wasClick&&rec.rotate&&g.pieces.length===1&&!g.locked){g.pieces[0].rot=(g.pieces[0].rot+1)%4;beep([400],.05)}else if(!wasClick)st.moves++;
       const before=lockedG.pieces.length;const res=settle(g);
       if(res){remask(res);beep(res.locked?[660,990]:[520],res.locked?.12:.07)}
       afterChange();redraw();
@@ -847,10 +861,25 @@ const Game=(()=>{
   addEventListener('keydown',e=>{
     if(!active||e.target.matches('input,textarea'))return;
     const k=e.key.toLowerCase();
-    if(k==='p')preview();else if(k==='a')arrangeNow();else if(k==='h')useHint();else if(k==='f')fit(),redraw();
+    if(k==='p')preview();else if(k==='g')arrangeNow();else if(k==='h')useHint();else if(k==='f')fit(),redraw();
     else if(k==='escape'){if($('#drawer').classList.contains('open'))closeDrawer();else if(hudHidden)setHud(true)}
   });
 
+  const keys=new Set();let kLast=0,kRun=false;
+  const KM={w:'u',arrowup:'u',s:'d',arrowdown:'d',a:'l',arrowleft:'l',d:'r',arrowright:'r'};
+  function kLoop(t){
+    if(!active||!keys.size){kRun=false;return}
+    const dt=Math.min(.05,(t-kLast)/1000);kLast=t;const sp=900*dt;
+    tx+=((keys.has('l')?1:0)-(keys.has('r')?1:0))*sp;ty+=((keys.has('u')?1:0)-(keys.has('d')?1:0))*sp;
+    clamp();redraw();requestAnimationFrame(kLoop);
+  }
+  addEventListener('keydown',e=>{
+    if(!active||e.ctrlKey||e.metaKey||e.target.matches('input,textarea'))return;
+    const m=KM[e.key.toLowerCase()];if(!m)return;e.preventDefault();keys.add(m);
+    if(!kRun){kRun=true;kLast=performance.now();requestAnimationFrame(kLoop)}
+  });
+  addEventListener('keyup',e=>{const m=KM[e.key.toLowerCase()];if(m)keys.delete(m)});
+  addEventListener('blur',()=>keys.clear());
   /* ---- progresso / fim */
   function afterChange(){
     updateHud();
@@ -882,14 +911,14 @@ const Game=(()=>{
   }
   async function persist(){
     if(!rec||completed||!pieces.length)return;
-    rec.state={pos:pieces.map(p=>[Math.round(p.x*10)/10,Math.round(p.y*10)/10]),groups:[lockedG,...groups].map(g=>({l:g.locked?1:0,p:g.pieces.map(p=>p.i)}))};
+    rec.state={pos:pieces.map(p=>[Math.round(p.x*10)/10,Math.round(p.y*10)/10,p.rot||0]),groups:[lockedG,...groups].map(g=>({l:g.locked?1:0,p:g.pieces.map(p=>p.i)}))};
     rec.elapsed=elapsed();rec.percent=percent();rec.stats={...st};rec.updated=Date.now();
     await DB.put(rec).catch(()=>{});
   }
   function restore(state){
     try{
       if(state.pos.length!==pieces.length)return false;
-      pieces.forEach((p,i)=>{p.x=state.pos[i][0];p.y=state.pos[i][1]});
+      pieces.forEach((p,i)=>{p.x=state.pos[i][0];p.y=state.pos[i][1];p.rot=state.pos[i][2]||0});
       groups=[];lockedG={pieces:[],locked:true};
       for(const g of state.groups){
         if(!g.p.length)continue;
@@ -914,7 +943,7 @@ const Game=(()=>{
     if(completed)return;if(Wallet.coins<HINT_COST)return toast('Dica custa '+HINT_COST+' moedas. Conclua puzzles para ganhar mais.');let best=null;
     for(const p of pieces)for(const[dr,dc]of NB){
       const rr=p.r+dr,cc=p.c+dc;if(rr<0||cc<0||rr>=rows||cc>=cols)continue;
-      const q=pieces[rr*cols+cc];if(q.g===p.g||q.g.locked)continue;
+      const q=pieces[rr*cols+cc];if(q.g===p.g||q.g.locked||p.rot||q.rot)continue;
       const score=(p.g.locked?100:0)+p.g.pieces.length;if(!best||score>best.s)best={s:score,p,q};
     }
     if(!best)return toast('Não achei nenhuma dica agora.');
@@ -932,8 +961,8 @@ const Game=(()=>{
   }
   async function reset(){
     stopClock();elapsedBase=0;completed=false;timeUpShown=false;st.moves=st.snaps=st.hints=0;
-    for(const p of pieces){p.x=boardX+p.c*cell;p.y=boardY+p.r*cell;p.mask=0;p.bmp=pieceBmp(p,0)}
-    makeSingles();settings.arrange?arrange():scatter();rec.state=null;rec.completed=false;rec.timed=rec.timed;
+    for(const p of pieces){p.rot=0;p.x=boardX+p.c*cell;p.y=boardY+p.r*cell;p.mask=0;p.bmp=pieceBmp(p,0)}
+    makeSingles();settings.arrange?arrange():scatter();randomRot();rec.state=null;rec.completed=false;rec.timed=rec.timed;
     fit();updateHud();startClock();redraw();persist();
   }
   function setHud(v){hudHidden=!v;$('#hud').style.display=v?'flex':'none';$('#prog').style.display=v?'block':'none';$('#showhud').style.display=v?'none':'block';updateHud()}
@@ -944,10 +973,7 @@ const Game=(()=>{
       {html:`<div class="dhead">Quebra-Cabeça</div>`},
       {ic:'←',t:'Voltar para a biblioteca',f:async()=>{await persist();showLibrary()}},
       {ic:'💾',t:'Salvar posição',f:async()=>{await persist();toast('Posição salva.')}},
-      {ic:'▦',t:'Arrumar nas bordas (A)',f:arrangeNow},
       {ic:'🖼',t:'Ver imagem completa (P)',f:preview},
-      {ic:'💡',t:'Dica (H) — 5 moedas',f:useHint},
-      {ic:'🛍',t:'Loja',f:async()=>{await persist();showShop()}},
       {ic:'📈',t:'Estatísticas',f:showStats},
       '-',
       {ic:'▭',t:'Mostrar só as peças de borda',sw:1,on:edgesOnly,f:v=>{edgesOnly=v;redraw()}},
@@ -964,7 +990,7 @@ const Game=(()=>{
       {ic:'⚙',t:'Configurações',f:()=>$('#mSet').classList.add('on')},
     ]);
   }
-  $('#gMenu').onclick=menu;$('#gArr').onclick=arrangeNow;$('#gHint').onclick=useHint;
+  $('#gShop').onclick=async()=>{await persist();showShop()};$('#gMenu').onclick=menu;$('#gArr').onclick=arrangeNow;$('#gHint').onclick=useHint;
 
   /* ---- ciclo de vida */
   async function open(id){
@@ -978,7 +1004,7 @@ const Game=(()=>{
       makeSingles();
       st.moves=rec.stats?.moves||0;st.snaps=rec.stats?.snaps||0;st.hints=rec.stats?.hints||0;
       elapsedBase=rec.elapsed||0;runStart=0;completed=false;timeUpShown=false;edgesOnly=false;showGhost=true;hint=null;
-      if(!(rec.state&&restore(rec.state))){makeSingles();settings.arrange?arrange():scatter()}
+      if(!(rec.state&&restore(rec.state))){makeSingles();settings.arrange?arrange():scatter();randomRot()}
       setHud(true);fit();updateHud();startClock();
       clearInterval(tickT);tickT=setInterval(()=>{if(active&&!completed){updateHud()}},1000);
       clearInterval(saveT);saveT=setInterval(()=>persist(),12000);
