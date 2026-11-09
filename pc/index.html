@@ -560,6 +560,7 @@ const Game=(()=>{
   let rec,geo,img,scaled,rows,cols,cell,margin,pieces=[],groups=[],lockedG=null;
   let boardX,boardY,boardW,boardH,worldW,worldH,ringsTotal;
   let scale=1,tx=0,ty=0,minScale=.05,maxScale=6,dirty=true,raf=0,active=false;
+  let sel=[],selRect=null,selDrag=null;
   let drag=null,pan=null,hint=null,edgesOnly=false,showGhost=true,hudHidden=false,completed=false,timeUpShown=false;
   let elapsedBase=0,runStart=0,tickT=0,saveT=0;
   const st={moves:0,snaps:0,hints:0};
@@ -791,6 +792,7 @@ const Game=(()=>{
     };
     draw(lockedG);
     for(const g of groups)if(g!==(drag&&drag.g))draw(g);
+    if(sel.length){ctx.shadowColor='#50c8ff';ctx.shadowBlur=14;ctx.globalAlpha=.9;for(const g of sel)if(groups.includes(g))for(const p of g.pieces)if(g!==(drag&&drag.g))drawPiece(ctx,p);ctx.shadowBlur=0;ctx.shadowColor='transparent';ctx.globalAlpha=1}
     if(drag)draw(drag.g);
     // dica
     let more=drawPet(now);
@@ -806,6 +808,7 @@ const Game=(()=>{
       }else hint=null;
     }
     ctx.restore();
+    if(selRect){const r=selRect;ctx.fillStyle='rgba(80,200,255,.15)';ctx.strokeStyle='rgba(80,200,255,.9)';ctx.lineWidth=2;ctx.setLineDash([8,5]);ctx.fillRect(Math.min(r.l,r.r),Math.min(r.t,r.b),Math.abs(r.r-r.l),Math.abs(r.b-r.t));ctx.strokeRect(Math.min(r.l,r.r),Math.min(r.t,r.b),Math.abs(r.r-r.l),Math.abs(r.b-r.t));ctx.setLineDash([])}
     if(more||drag)requestFrame();
     if(more&&!drag)dirty=true;
   }
@@ -833,7 +836,11 @@ const Game=(()=>{
     if(!active)return;cv.setPointerCapture(e.pointerId);
     hint=null;
     const rx=e.offsetX,ry=e.offsetY;
-    if(e.button===2){const [wx,wy]=toWorld(rx,ry),p=pieceAt(wx,wy);if(p&&rec.rotate&&p.g.pieces.length===1&&!p.g.locked){p.rot=(p.rot+3)%4;settleAfterRot(p);}return}
+    if((e.button===0&&e.shiftKey)||e.button===2){
+      const [wx,wy]=toWorld(rx,ry),p=pieceAt(wx,wy);
+      if(e.button===2&&p){if(rec.rotate&&p.g.pieces.length===1&&!p.g.locked){p.rot=(p.rot+3)%4;settleAfterRot(p)}return}
+      sel=[];selDrag={x:rx,y:ry};selRect={l:rx,t:ry,r:rx,b:ry};redraw();return;
+    }
     if(e.button===0){
       const [wx,wy]=toWorld(rx,ry),p=pieceAt(wx,wy);
       if(p){
@@ -843,22 +850,30 @@ const Game=(()=>{
           remask(g);
         }
         groups=groups.filter(x=>x!==g);groups.push(g);
-        drag={g,lx:rx,ly:ry,moved:false};redraw();return;
+        const extras=sel.includes(g)?sel.filter(x=>x!==g&&groups.includes(x)):[];if(!extras.length)sel=[];
+        drag={g,extras,lx:rx,ly:ry,moved:false};redraw();return;
       }
     }
+    if(sel.length){sel=[];redraw()}
     pan={lx:rx,ly:ry};
   });
   cv.addEventListener('pointermove',e=>{
     if(!active)return;const rx=e.offsetX,ry=e.offsetY;
-    if(drag){translate(drag.g,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(drag.g);drag.lx=rx;drag.ly=ry;drag.moved=true;redraw()}
+    if(selDrag){selRect.r=rx;selRect.b=ry;redraw()}
+    else if(drag){translate(drag.g,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(drag.g);for(const x of drag.extras){translate(x,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(x)}drag.lx=rx;drag.ly=ry;drag.moved=true;redraw()}
     else if(pan){tx+=rx-pan.lx;ty+=ry-pan.ly;pan.lx=rx;pan.ly=ry;clamp();redraw()}
   });
   function settleAfterRot(p){const res=settle(p.g);if(res)remask(res);logMove();afterChange();redraw()}
   const up=()=>{
+    if(selDrag){
+      const r=selRect,[x0,y0]=toWorld(Math.min(r.l,r.r),Math.min(r.t,r.b)),[x1,y1]=toWorld(Math.max(r.l,r.r),Math.max(r.t,r.b));
+      sel=groups.filter(g=>!g.locked&&g.pieces.some(p=>{const cx=p.x+cell/2,cy=p.y+cell/2;return cx>=x0&&cx<=x1&&cy>=y0&&cy<=y1&&(!edgesOnly||isEdge(p))}));
+      selDrag=null;selRect=null;redraw();return;
+    }
     if(drag){
-      const g=drag.g,wasClick=!drag.moved;drag=null;
+      const g=drag.g,extras=drag.extras,wasClick=!drag.moved&&!drag.extras.length;drag=null;
       if(wasClick&&rec.rotate&&g.pieces.length===1&&!g.locked){g.pieces[0].rot=(g.pieces[0].rot+1)%4;beep([400],.05)}else if(!wasClick)st.moves++;
-      const res=settle(g);logMove();
+      const res=settle(g);for(const x of extras){if(groups.includes(x)){const r2=settle(x);if(r2)remask(r2)}}if(extras.length)sel=[];logMove();
       if(res){remask(res);beep(res.locked?[660,990]:[520],res.locked?.12:.07)}
       afterChange();redraw();
     }
