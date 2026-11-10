@@ -149,7 +149,8 @@ input[type=checkbox].sw:checked::after{left:21px}
 <div id="shop" class="screen col">
   <div class="head"><button class="tonal burger" data-back>←</button><h2>Loja</h2><button class="tonal" id="promoBtn" style="margin-left:auto">Código</button><span class="coin" id="shopCoins" style="margin-left:12px"></span></div>
   <div class="list"><h3 style="max-width:1200px;margin:0 auto 8px">Mesas</h3><div class="grid" id="shopTables"></div>
-  <h3 style="max-width:1200px;margin:18px auto 8px">Decorações</h3><div class="grid" id="shopDecos"></div></div>
+  <h3 style="max-width:1200px;margin:18px auto 8px">Decorações</h3><div class="grid" id="shopDecos"></div>
+  <h3 style="max-width:1200px;margin:18px auto 8px">Minhas decorações (registro)</h3><div class="grid" id="shopMine"></div></div>
 </div>
 <!-- ===== JOGO ===== -->
 <div id="game" class="screen">
@@ -192,6 +193,10 @@ input[type=checkbox].sw:checked::after{left:21px}
   <div class="setrow"><div>Volume do ambiente</div><input type="range" id="ambVol" min="0" max="100" style="width:160px;accent-color:var(--pri)"></div>
   <div class="acts"><button id="setOk">Fechar</button></div>
 </div></div>
+<div class="modal" id="mDraw"><div class="box" style="max-width:460px"><h3>Desenhar decoração</h3>
+  <canvas id="dvc" width="400" height="400" style="width:100%;max-width:400px;border-radius:12px;touch-action:none;background:repeating-conic-gradient(#ddd 0 25%,#fff 0 50%) 0 0/20px 20px"></canvas>
+  <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap"><input type="color" id="dvColor" value="#222222"><input type="range" id="dvSize" min="2" max="60" value="10"><button class="tonal" id="dvEr">Borracha</button><button class="tonal" id="dvUndo">Desfazer</button><button class="tonal" id="dvClr">Limpar</button></div>
+  <div class="acts"><button class="tonal" id="dvCancel">Cancelar</button><button id="dvSave">Salvar e registrar</button></div></div></div>
 <div class="modal" id="mMsg"><div class="box"><h3 id="msgT"></h3><div id="msgB" style="white-space:pre-line"></div><div class="acts" id="msgA"></div></div></div>
 <div class="modal" id="vidprog"><div class="box"><h3>Criando o vídeo do puzzle…</h3><div id="vidT">0%</div><div class="acts"><button class="ghost" id="vidSkip">Pular</button></div></div></div>
 <div class="modal" id="mVid"><div class="box"><video id="vid" controls style="max-width:80vw;max-height:68vh;border-radius:12px"></video><div class="acts"><button class="ghost" id="vDel">Apagar vídeo</button><button class="tonal" id="vDl">Baixar</button><button id="vClose">Fechar</button></div></div></div>
@@ -275,6 +280,10 @@ const SHOP=[
   {id:'pet_cat',img:'gato_tchau',name:'Gatinho que passeia pela mesa',price:150,pet:1},
 ];
 const HINT_COST=5,MAX_DECOS=8;
+const customs=()=>store.get('custom',[]);
+const allShop=()=>SHOP.concat(customs().map(c=>({id:c.id,name:c.name,price:c.price,custom:1,url:c.url,sales:c.sales||0,created:c.created})));
+const _ci={};
+const imgOf=it=>{if(!it)return null;if(!it.url)return IMG[it.img];if(!_ci[it.id]){const i=new Image();i.src=it.url;_ci[it.id]=i}return _ci[it.id]};
 const Wallet={
   get coins(){return store.get('coins',0)},
   add(n){store.set('coins',Math.max(0,this.coins+n));updateCoins()},
@@ -289,12 +298,34 @@ function redeemPromo(){
   const c=(prompt('Digite o código promocional')||'').trim().toLowerCase();if(!c)return;
   if(PROMO[c]){Wallet.add(PROMO[c]);toast('Código aceito! +'+PROMO[c]+' moedas')}else toast('Código inválido.');
 }
+function openDraw(){
+  const m=$('#mDraw'),cv=$('#dvc'),c=cv.getContext('2d'),undo=[];let er=false,drawing=false,lx,ly;
+  c.clearRect(0,0,400,400);m.classList.add('on');$('#dvEr').className='tonal';
+  const pos=e=>{const r=cv.getBoundingClientRect();return[(e.clientX-r.left)*400/r.width,(e.clientY-r.top)*400/r.height]};
+  const stroke=(x,y)=>{c.globalCompositeOperation=er?'destination-out':'source-over';c.strokeStyle=c.fillStyle=$('#dvColor').value;c.lineWidth=+$('#dvSize').value;c.lineCap=c.lineJoin='round';c.beginPath();c.moveTo(lx,ly);c.lineTo(x,y);c.stroke();lx=x;ly=y};
+  cv.onpointerdown=e=>{undo.push(c.getImageData(0,0,400,400));if(undo.length>25)undo.shift();drawing=true;cv.setPointerCapture(e.pointerId);[lx,ly]=pos(e);stroke(lx+.01,ly)};
+  cv.onpointermove=e=>{if(drawing){const[x,y]=pos(e);stroke(x,y)}};
+  cv.onpointerup=cv.onpointercancel=()=>{drawing=false};
+  $('#dvEr').onclick=()=>{er=!er;$('#dvEr').className=er?'':'tonal'};
+  $('#dvUndo').onclick=()=>{const u=undo.pop();if(u)c.putImageData(u,0,0)};
+  $('#dvClr').onclick=()=>{undo.push(c.getImageData(0,0,400,400));c.clearRect(0,0,400,400)};
+  $('#dvCancel').onclick=()=>m.classList.remove('on');
+  $('#dvSave').onclick=()=>{
+    const d=c.getImageData(0,0,400,400).data;let x0=400,y0=400,x1=-1,y1=-1;
+    for(let y=0;y<400;y++)for(let x=0;x<400;x++)if(d[(y*400+x)*4+3]>8){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}
+    if(x1<0)return toast('Desenhe alguma coisa primeiro.');
+    const name=(prompt('Nome da decoração')||'').trim()||'Minha decoração',price=Math.max(0,Math.min(100000,parseInt(prompt('Preço em moedas (ex: 50)')||'0')||0));
+    const o=document.createElement('canvas');o.width=x1-x0+1;o.height=y1-y0+1;o.getContext('2d').drawImage(cv,x0,y0,o.width,o.height,0,0,o.width,o.height);
+    const id='custom_'+Date.now();store.set('custom',[...customs(),{id,name,price,url:o.toDataURL('image/png'),created:Date.now(),sales:0}]);
+    store.set('owned',[...Wallet.owned,id]);if(Wallet.decos.length<MAX_DECOS)store.set('decos',[...Wallet.decos,id]);m.classList.remove('on');toast('Decoração salva e registrada!');showShop();
+  };
+}
 function updateCoins(){const t='🪙 '+Wallet.coins;$('#hCoins').textContent=t;$('#shopCoins').textContent=t}
 function showShop(){
   show('shop');updateCoins();$('#promoBtn').onclick=redeemPromo;
   const mk=(it)=>{
     const own=Wallet.has(it.id),d=document.createElement('div');d.className='item';
-    const pic=it.table?`<div class="pic" style="background:${it.color}"></div>`:`<div class="pic"><img src="data:image/png;base64,${DRAW[it.img]}"></div>`;
+    const pic=it.table?`<div class="pic" style="background:${it.color}"></div>`:`<div class="pic"><img src="${it.url||'data:image/png;base64,'+DRAW[it.img]}"></div>`;
     let btn;
     if(!own)btn=`<button data-a="buy">🪙 ${it.price}</button>`;
     else if(it.table)btn=`<button class="${settings.tableId===it.id?'':'tonal'}" data-a="use">${settings.tableId===it.id?'Em uso':'Usar'}</button>`;
@@ -315,6 +346,10 @@ function showShop(){
   const def=document.createElement('div');def.className='item';def.innerHTML=`<div class="pic" style="background:${TABLE_COLORS[settings.table]}"></div><b style="font-size:14px">Mesa simples</b><button class="${settings.tableId?'tonal':''}">${settings.tableId?'Usar':'Em uso'}</button>`;
   def.querySelector('button').onclick=()=>{settings.tableId=null;saveSettings();showShop()};t.appendChild(def);
   SHOP.forEach(it=>(it.table?t:dc).appendChild(mk(it)));
+  const my=$('#shopMine');my.innerHTML='';
+  const nd=document.createElement('div');nd.className='item';nd.innerHTML='<div class="pic" style="display:flex;align-items:center;justify-content:center;font-size:34px">✏️</div><b style="font-size:14px">Desenhar nova decoração</b><button>Desenhar</button>';
+  nd.querySelector('button').onclick=openDraw;my.appendChild(nd);
+  customs().forEach(c=>{const it=allShop().find(x=>x.id===c.id),d=mk(it);d.querySelector('b').insertAdjacentHTML('afterend',`<small style="opacity:.7;display:block">${c.price} moedas · vendas: ${c.sales||0} · ${new Date(c.created).toLocaleDateString('pt-BR')}</small>`);my.appendChild(d)});
 }
 
 /* ============================================================ banco (IndexedDB) */
@@ -769,7 +804,7 @@ const Game=(()=>{
   const isEdge=p=>p.r===0||p.c===0||p.r===rows-1||p.c===cols-1;
   const patCache={};
   function drawTable(c=ctx){
-    const it=SHOP.find(x=>x.id===settings.tableId&&Wallet.has(x.id));
+    const it=allShop().find(x=>x.id===settings.tableId&&Wallet.has(x.id));
     c.fillStyle=it?it.color:(TABLE_COLORS[settings.table]||TABLE_COLORS[0]);c.fillRect(0,0,worldW,worldH);
     const pat=it?it.pat:0,r=rng(7);
     if(pat===1){c.fillStyle='rgba(0,0,0,.14)';for(let y=0;y<worldH;y+=cell*.8)c.fillRect(0,y,worldW,cell*.05);c.fillStyle='rgba(255,255,255,.05)';for(let i=0;i<60;i++)c.fillRect(r()*worldW,r()*worldH,cell*(1+r()*3),cell*.03)}
@@ -810,7 +845,7 @@ const Game=(()=>{
     const ids=Wallet.decos.filter(id=>Wallet.has(id));if(!ids.length)return[];
     const sp=decoSpots(ids.length),pos=store.get('decoPos',{}),out=[];
     ids.forEach((id,i)=>{
-      const it=SHOP.find(x=>x.id===id),im=it&&IMG[it.img];if(!im||!im.complete)return;
+      const it=allShop().find(x=>x.id===id),im=imgOf(it);if(!im||!im.complete)return;
       const p=pos[id],sc=p?p[2]:1,cx=p?p[0]*worldW:sp[i][0],cy=p?p[1]*worldH:sp[i][1];
       const h=cell*2.2*sc,w=h*im.width/im.height;out.push({id,im,cx,cy,w,h,sc});
     });
@@ -888,7 +923,7 @@ const Game=(()=>{
   }
   function paintStatic(W,H,d){
     const c=sx;c.setTransform(d,0,0,d,0,0);
-    {const it0=SHOP.find(x=>x.id===settings.tableId&&Wallet.has(x.id));c.fillStyle=it0?it0.color:(TABLE_COLORS[settings.table]||TABLE_COLORS[0]);c.fillRect(0,0,W,H)}
+    {const it0=allShop().find(x=>x.id===settings.tableId&&Wallet.has(x.id));c.fillStyle=it0?it0.color:(TABLE_COLORS[settings.table]||TABLE_COLORS[0]);c.fillRect(0,0,W,H)}
     c.save();c.translate(tx,ty);c.scale(scale,scale);
     drawTable(c);drawLight(c);drawDecos(c);
     c.fillStyle='rgba(255,255,255,.06)';c.fillRect(boardX,boardY,boardW,boardH);
