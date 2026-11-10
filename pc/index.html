@@ -163,6 +163,7 @@ input[type=checkbox].sw:checked::after{left:21px}
     <button id="gShop" title="Loja">🛍</button>
     <button id="gExit" title="Sair do puzzle">✕</button>
   </div>
+  <button id="decorDone" style="position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:7;display:none">Terminei de arrumar a mesa</button>
   <button id="showhud" title="Mostrar botões">▼</button>
 </div>
 
@@ -780,11 +781,30 @@ const Game=(()=>{
       sp.push([x,y])}
     return sp;
   }
+  let decorMode=false,decoSel=null,decoDrag=null,hop=null,lastTap={id:null,t:0};
+  const DECO_SCALES=[.7,1,1.4,1.9];
+  function decoItems(){
+    const ids=Wallet.decos.filter(id=>Wallet.has(id));if(!ids.length)return[];
+    const sp=decoSpots(ids.length),pos=store.get('decoPos',{}),out=[];
+    ids.forEach((id,i)=>{
+      const it=SHOP.find(x=>x.id===id),im=it&&IMG[it.img];if(!im||!im.complete)return;
+      const p=pos[id],sc=p?p[2]:1,cx=p?p[0]*worldW:sp[i][0],cy=p?p[1]*worldH:sp[i][1];
+      const h=cell*2.2*sc,w=h*im.width/im.height;out.push({id,im,cx,cy,w,h,sc});
+    });
+    return out;
+  }
+  const hitDeco=(wx,wy)=>decoItems().reverse().find(d=>Math.abs(wx-d.cx)<=d.w/2&&Math.abs(wy-d.cy)<=d.h/2)||null;
   function drawDecos(c=ctx){
-    const ids=Wallet.decos.filter(id=>Wallet.has(id));if(!ids.length)return;
-    const sp=decoSpots(ids.length);
-    ids.forEach((id,i)=>{const it=SHOP.find(x=>x.id===id),im=it&&IMG[it.img];if(!im||!im.complete)return;
-      const h=cell*2.2,w=h*im.width/im.height;c.globalAlpha=.95;c.drawImage(im,sp[i][0]-w/2,sp[i][1]-h/2,w,h);c.globalAlpha=1});
+    const now=performance.now();
+    for(const d of decoItems()){
+      let dy=0;
+      if(hop&&hop.id===d.id){const k=(now-hop.t0)/600;if(k<1)dy=-Math.sin(k*Math.PI)*(1-k*.5)*cell*.7}
+      c.globalAlpha=.95;c.drawImage(d.im,d.cx-d.w/2,d.cy-d.h/2+dy,d.w,d.h);c.globalAlpha=1;
+      if(decorMode){
+        c.save();c.strokeStyle=d.id===decoSel?'rgba(255,214,64,.95)':'rgba(255,255,255,.4)';c.lineWidth=Math.max(1.5,2/scale);c.setLineDash([8/scale,6/scale]);
+        c.strokeRect(d.cx-d.w/2,d.cy-d.h/2,d.w,d.h);c.restore();
+      }
+    }
   }
   const pet={init:false,x:0,y:0,tx:0,ty:0,pause:0,face:1,last:0,rnd:rng(11)};
   function petTarget(){
@@ -869,6 +889,7 @@ const Game=(()=>{
     if(sel.length){ctx.shadowColor='#50c8ff';ctx.shadowBlur=14;ctx.globalAlpha=.9;for(const g of sel)if(groups.includes(g)&&!(drag&&(g===drag.g)))for(const p of g.pieces)drawPiece(ctx,p);ctx.shadowBlur=0;ctx.shadowColor='transparent';ctx.globalAlpha=1}
     if(drag){for(const g of drag.extras)drawG(ctx,g,false,vl,vt,vr,vb);drawG(ctx,drag.g,true,vl,vt,vr,vb)}
     let more=drawPet(now);
+    if(hop){if(now-hop.t0<600){dirty=true;more=true}else{hop=null;dirty=true}}
     if(hint){
       if(now<hint.until&&groups.includes(hint.g)){
         ctx.restore();ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);ctx.save();ctx.translate(tx,ty);ctx.scale(scale,scale);
@@ -908,6 +929,12 @@ const Game=(()=>{
     if(!active)return;cv.setPointerCapture(e.pointerId);
     hint=null;
     const rx=e.offsetX,ry=e.offsetY;
+    if(decorMode){
+      if(e.button!==0)return;
+      const [wx,wy]=toWorld(rx,ry),d=hitDeco(wx,wy);
+      if(d){decoSel=d.id;decoDrag={id:d.id,lx:rx,ly:ry,moved:false};redraw();return}
+      decoSel=null;pan={lx:rx,ly:ry,sx:rx,sy:ry,moved:false};redraw();return;
+    }
     if((e.button===0&&e.shiftKey)||e.button===2){
       const [wx,wy]=toWorld(rx,ry),p=pieceAt(wx,wy);
       if(e.button===2&&p){if(rec.rotate&&p.g.pieces.length===1&&!p.g.locked){p.rot=(p.rot+3)%4;settleAfterRot(p)}return}
@@ -927,16 +954,36 @@ const Game=(()=>{
       }
     }
     if(sel.length){sel=[];redraw()}
-    pan={lx:rx,ly:ry};
+    pan={lx:rx,ly:ry,sx:rx,sy:ry,moved:false};
   });
   cv.addEventListener('pointermove',e=>{
     if(!active)return;const rx=e.offsetX,ry=e.offsetY;
-    if(selDrag){selRect.r=rx;selRect.b=ry;requestFrame()}
+    if(decoDrag){
+      const d=decoItems().find(x=>x.id===decoDrag.id);
+      if(d){const nx=d.cx+(rx-decoDrag.lx)/scale,ny=d.cy+(ry-decoDrag.ly)/scale,o=store.get('decoPos',{});o[d.id]=[Math.max(.02,Math.min(.98,nx/worldW)),Math.max(.02,Math.min(.98,ny/worldH)),d.sc];store.set('decoPos',o)}
+      decoDrag.lx=rx;decoDrag.ly=ry;decoDrag.moved=true;redraw();
+    }
+    else if(selDrag){selRect.r=rx;selRect.b=ry;requestFrame()}
     else if(drag){translate(drag.g,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(drag.g);for(const x of drag.extras){translate(x,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(x)}drag.lx=rx;drag.ly=ry;drag.moved=true;requestFrame()}
-    else if(pan){tx+=rx-pan.lx;ty+=ry-pan.ly;pan.lx=rx;pan.ly=ry;clamp();redraw()}
+    else if(pan){if(Math.hypot(rx-pan.sx,ry-pan.sy)>5)pan.moved=true;tx+=rx-pan.lx;ty+=ry-pan.ly;pan.lx=rx;pan.ly=ry;clamp();redraw()}
   });
   function settleAfterRot(p){const res=settle(p.g);if(res)remask(res);logMove();afterChange();redraw()}
   const up=()=>{
+    if(decoDrag){
+      if(!decoDrag.moved){
+        const now=performance.now();
+        if(lastTap.id===decoDrag.id&&now-lastTap.t<350){
+          const d=decoItems().find(x=>x.id===decoDrag.id),o=store.get('decoPos',{});
+          if(d){const k=(DECO_SCALES.findIndex(v=>Math.abs(v-d.sc)<.01)+1)%DECO_SCALES.length;o[d.id]=[d.cx/worldW,d.cy/worldH,DECO_SCALES[k]];store.set('decoPos',o)}
+          lastTap={id:null,t:0};
+        }else lastTap={id:decoDrag.id,t:now};
+      }
+      decoDrag=null;redraw();return;
+    }
+    if(pan&&!pan.moved&&!decorMode&&!drag){
+      const [wx,wy]=toWorld(pan.sx,pan.sy),d=hitDeco(wx,wy);
+      if(d){hop={id:d.id,t0:performance.now()};beep([880],.06);redraw()}
+    }
     if(selDrag){
       const r=selRect,[x0,y0]=toWorld(Math.min(r.l,r.r),Math.min(r.t,r.b)),[x1,y1]=toWorld(Math.max(r.l,r.r),Math.max(r.t,r.b));
       sel=groups.filter(g=>!g.locked&&g.pieces.some(p=>{const cx=p.x+cell/2,cy=p.y+cell/2;return cx>=x0&&cx<=x1&&cy>=y0&&cy<=y1&&(!edgesOnly||isEdge(p))}));
@@ -1116,6 +1163,11 @@ const Game=(()=>{
   }
   function setHud(v){hudHidden=!v;$('#hud').style.display=v?'flex':'none';$('#prog').style.display=v?'block':'none';$('#showhud').style.display=v?'none':'block';updateHud()}
   $('#showhud').onclick=()=>setHud(true);
+  function setDecor(on){
+    decorMode=on;decoSel=null;decoDrag=null;$('#decorDone').style.display=on?'block':'none';$('#pill').style.display=on||hudHidden?'none':'block';
+    if(on)toast('Arraste as decorações. Toque duas vezes para mudar o tamanho.');redraw();
+  }
+  $('#decorDone').onclick=()=>setDecor(false);
   function leaveToHome(){show('home')}
   function menu(){
     openDrawer([
@@ -1125,6 +1177,7 @@ const Game=(()=>{
       {ic:'💾',t:'Salvar posição',f:async()=>{await persist();toast('Posição salva.')}},
       {ic:'🖼',t:'Ver imagem completa (P)',f:preview},
       {ic:'📈',t:'Estatísticas',f:showStats},
+      {ic:'🪴',t:'Arrumar a mesa (decorações)',f:()=>setDecor(true)},
       '-',
       {ic:'▭',t:'Mostrar só as peças de borda',sw:1,on:edgesOnly,f:v=>{edgesOnly=v;redraw()}},
       {ic:'◩',t:'Imagem de fundo no tabuleiro',sw:1,on:showGhost,f:v=>{showGhost=v;redraw()}},
@@ -1166,7 +1219,7 @@ const Game=(()=>{
   }
   function leave(){
     if(!active)return;
-    persist();Ambient.stop();active=false;stopClock();clearInterval(tickT);clearInterval(saveT);
+    persist();Ambient.stop();decorMode=false;$('#decorDone').style.display='none';active=false;stopClock();clearInterval(tickT);clearInterval(saveT);
     pieces=[];groups=[];hint=null;
   }
   async function again(p){
