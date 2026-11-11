@@ -320,6 +320,35 @@ const Cloud=(()=>{
     async roomGet(code){const t=await db('GET','rooms/'+code);return t&&t!=='null'?JSON.parse(t):null},
     async roomPush(code,g){await db('POST','rooms/'+code+'/moves',JSON.stringify({by:uid(),g,t:Date.now()}))},
     async roomPoll(code,after){const t=await db('GET','rooms/'+code+'/moves',null,'orderBy=%22%24key%22'+(after?'&startAt=%22'+after+'%22':''));if(!t||t==='null')return[];const o=JSON.parse(t);return Object.keys(o).sort().filter(k=>k!==after).map(k=>({key:k,by:o[k].by,g:o[k].g}))},
+    async livePut(code,body){await db('PUT','rooms/'+code+'/live/'+uid(),body)},
+    liveStream(code,cb){
+      let stop=false;
+      (async()=>{
+        while(!stop){
+          try{
+            const t=await auth(),r=await fetch(DB+'/rooms/'+code+'/live.json'+(t?'?auth='+t:''),{headers:{Accept:'text/event-stream'}});
+            const rd=r.body.getReader(),dec=new TextDecoder();let buf='',ev='',state={};
+            while(!stop){
+              const {done,value}=await rd.read();if(done)break;
+              buf+=dec.decode(value,{stream:true});let i;
+              while((i=buf.indexOf('\n'))>=0){
+                const line=buf.slice(0,i).replace(/\r$/,'');buf=buf.slice(i+1);
+                if(line.startsWith('event:'))ev=line.slice(6).trim();
+                else if(line.startsWith('data:')&&(ev==='put'||ev==='patch')){
+                  const d=JSON.parse(line.slice(5));if(!d)continue;
+                  if(d.path==='/'){if(ev==='put')state=d.data||{};else for(const k in d.data||{}){if(d.data[k]===null)delete state[k];else state[k]=d.data[k]}}
+                  else{const k=d.path.split('/')[1];if(d.data===null)delete state[k];else state[k]=d.data}
+                  cb(state);
+                }
+              }
+            }
+            try{rd.cancel()}catch(e){}
+          }catch(e){}
+          if(!stop)await new Promise(r=>setTimeout(r,1000));
+        }
+      })();
+      return()=>{stop=true};
+    },
     async claim(){await auth();const p='earnings/'+uid(),t=await db('GET',p);if(!t||t==='null')return 0;const o=JSON.parse(t);let n=0;for(const k in o){n+=o[k].amount||0;await db('DELETE',p+'/'+k)}if(n)Wallet.add(n);return n},
   };
 })();
@@ -996,8 +1025,8 @@ const Game=(()=>{
     c.strokeStyle='rgba(255,255,255,.35)';c.lineWidth=Math.max(1,2/scale);c.strokeRect(boardX,boardY,boardW,boardH);
     const vl=-tx/scale-cell*2,vt=-ty/scale-cell*2,vr=(W-tx)/scale+cell*2,vb=(H-ty)/scale+cell*2;
     drawG(c,lockedG,false,vl,vt,vr,vb);
-    const live=drag?new Set([drag.g,...drag.extras]):null;
-    for(const g of groups)if(!(live&&live.has(g)))drawG(c,g,false,vl,vt,vr,vb);
+    const live=new Set(drag?[drag.g,...drag.extras]:[]);for(const g of remoteSet())live.add(g);
+    for(const g of groups)if(!live.has(g))drawG(c,g,false,vl,vt,vr,vb);
     c.restore();
   }
   function frame(){
@@ -1010,6 +1039,7 @@ const Game=(()=>{
     ctx.save();ctx.translate(tx,ty);ctx.scale(scale,scale);
     const vl=-tx/scale-cell*2,vt=-ty/scale-cell*2,vr=(W-tx)/scale+cell*2,vb=(H-ty)/scale+cell*2;
     if(sel.length){ctx.shadowColor='#50c8ff';ctx.shadowBlur=14;ctx.globalAlpha=.9;for(const g of sel)if(groups.includes(g)&&!(drag&&(g===drag.g)))for(const p of g.pieces)drawPiece(ctx,p);ctx.shadowBlur=0;ctx.shadowColor='transparent';ctx.globalAlpha=1}
+    for(const v of rLive.values())for(const g of v.gs){if(!groups.includes(g))continue;ctx.save();ctx.shadowColor='hsl('+v.hue+',90%,60%)';ctx.shadowBlur=22/scale*scale;drawG(ctx,g,false,vl,vt,vr,vb);ctx.restore()}
     if(drag){for(const g of drag.extras)drawG(ctx,g,false,vl,vt,vr,vb);drawG(ctx,drag.g,true,vl,vt,vr,vb)}
     let more=drawPet(now);
     if(hop){if(now-hop.t0<600){dirty=true;more=true}else{hop=null;dirty=true}}
@@ -1034,8 +1064,9 @@ const Game=(()=>{
   /* ---- entrada */
   const toWorld=(x,y)=>[(x-tx)/scale,(y-ty)/scale];
   function pieceAt(wx,wy){
+    const rs=rLive.size?remoteSet():null;
     for(let gi=groups.length-1;gi>=0;gi--){
-      const g=groups[gi];if(g.locked&&settings.lock)continue;
+      const g=groups[gi];if(g.locked&&settings.lock)continue;if(rs&&rs.has(g))continue;
       for(const p of g.pieces){
         if(edgesOnly&&!g.locked&&!isEdge(p))continue;
         let lx=wx-p.x+p.c*cell,ly=wy-p.y+p.r*cell;
@@ -1087,7 +1118,7 @@ const Game=(()=>{
       decoDrag.lx=rx;decoDrag.ly=ry;decoDrag.moved=true;redraw();
     }
     else if(selDrag){selRect.r=rx;selRect.b=ry;requestFrame()}
-    else if(drag){translate(drag.g,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(drag.g);for(const x of drag.extras){translate(x,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(x)}drag.lx=rx;drag.ly=ry;drag.moved=true;requestFrame()}
+    else if(drag){translate(drag.g,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(drag.g);for(const x of drag.extras){translate(x,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(x)}drag.lx=rx;drag.ly=ry;drag.moved=true;liveSend();requestFrame()}
     else if(pan){if(Math.hypot(rx-pan.sx,ry-pan.sy)>5)pan.moved=true;tx+=rx-pan.lx;ty+=ry-pan.ly;pan.lx=rx;pan.ly=ry;clamp();redraw()}
   });
   function settleAfterRot(p){const res=settle(p.g);if(res)remask(res);logMove();afterChange();redraw();roomSend([p])}
@@ -1118,7 +1149,7 @@ const Game=(()=>{
       const res=settle(g);for(const x of extras){if(groups.includes(x)){const r2=settle(x);if(r2)remask(r2)}}if(extras.length)sel=[];logMove();
       if(res){remask(res);beep(res.locked?[660,990]:[520],res.locked?.12:.07)}
       afterChange();redraw();
-      roomSend(moved0);
+      roomSend(moved0);liveClear();
     }
     pan=null;
   };
@@ -1357,16 +1388,52 @@ const Game=(()=>{
       afterChange();redraw();
     }catch(e){console.error(e)}
   }
+  /* ---- peças dos outros jogadores ao vivo */
+  const rLive=new Map();let liveBusy=false,livePend=null,liveLast=0,liveStop=null;
+  const remoteSet=()=>{const st=new Set();for(const v of rLive.values())for(const g of v.gs)st.add(g);return st};
+  function applyLive(uid,data){
+    if(!active||completed||!data||!data.a)return;
+    const [ox,oy]=org(),gs=new Set();
+    for(const e of data.a){
+      const p=pieces[e[0]];if(!p||!p.g||p.g===lockedG)continue;
+      const g=p.g;if(drag&&(drag.g===g||drag.extras.includes(g)))continue;
+      translate(g,ox+e[1]*cell-p.x,oy+e[2]*cell-p.y);
+      if(g.pieces.length===1)p.rot=e[3]||0;
+      gs.add(g);
+    }
+    rLive.set(uid,{gs,t:performance.now(),hue:[...uid].reduce((a,c)=>a+c.charCodeAt(0),0)%360});
+    dirty=true;requestFrame();
+  }
+  function clearLive(uid){if(rLive.delete(uid)){dirty=true;requestFrame()}}
+  function onLiveState(state){
+    const me=Cloud.uid();
+    for(const uid in state)if(uid!==me)applyLive(uid,state[uid]);
+    for(const uid of [...rLive.keys()])if(!(uid in state))clearLive(uid);
+  }
+  setInterval(()=>{const n=performance.now();for(const [u,v] of rLive)if(n-v.t>4000)clearLive(u)},1000);
+  function liveSend(force){
+    if(!room||!drag)return;
+    const now=performance.now();if(!force&&now-liveLast<80)return;liveLast=now;
+    const [ox,oy]=org(),a=[drag.g,...drag.extras].filter(g=>g.pieces.length).map(g=>{const p=g.pieces[0];return[p.i,Math.round((p.x-ox)/cell*1e3)/1e3,Math.round((p.y-oy)/cell*1e3)/1e3,p.rot||0]});
+    livePend=JSON.stringify({a,t:Date.now()});flushLive();
+  }
+  function liveClear(){if(!room)return;livePend='null';flushLive()}
+  async function flushLive(){
+    if(liveBusy||livePend==null||!room)return;
+    liveBusy=true;const b=livePend,code=room.code;livePend=null;
+    try{await Cloud.livePut(code,b)}catch(e){}
+    liveBusy=false;if(livePend!=null)flushLive();
+  }
   function startRoom(code){
     if(room&&room.code===code)return;
-    room={code,last:null};clearInterval(roomT);
+    room={code,last:null};clearInterval(roomT);if(liveStop)liveStop();liveStop=Cloud.liveStream(code,onLiveState);
     const me=Cloud.uid();
     roomT=setInterval(async()=>{
       if(!active||!room)return;
       try{const ms=await Cloud.roomPoll(code,room.last);if(ms.length){room.last=ms[ms.length-1].key;for(const m of ms)if(m.by!==me)applyRemote(m.g)}}catch(e){}
     },1500);
   }
-  const stopRoom=()=>{clearInterval(roomT);room=null};
+  const stopRoom=()=>{clearInterval(roomT);if(liveStop){liveStop();liveStop=null}if(room)liveClear();room=null;rLive.clear()};
   async function createRoom(){
     await Cloud.init();
     if(room){showRoomCode(room.code);return}
