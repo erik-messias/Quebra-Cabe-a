@@ -150,7 +150,8 @@ input[type=checkbox].sw:checked::after{left:21px}
   <div class="head"><button class="tonal burger" data-back>←</button><h2>Loja</h2><button class="tonal" id="promoBtn" style="margin-left:auto">Código</button><span class="coin" id="shopCoins" style="margin-left:12px"></span></div>
   <div class="list"><h3 style="max-width:1200px;margin:0 auto 8px">Mesas</h3><div class="grid" id="shopTables"></div>
   <h3 style="max-width:1200px;margin:18px auto 8px">Decorações</h3><div class="grid" id="shopDecos"></div>
-  <h3 style="max-width:1200px;margin:18px auto 8px">Minhas decorações (registro)</h3><div class="grid" id="shopMine"></div></div>
+  <h3 style="max-width:1200px;margin:18px auto 8px">Minhas decorações (registro)</h3><div class="grid" id="shopMine"></div>
+  <h3 style="max-width:1200px;margin:18px auto 8px">Comunidade (decorações de outras pessoas)</h3><div class="grid" id="shopComm"></div></div>
 </div>
 <!-- ===== JOGO ===== -->
 <div id="game" class="screen">
@@ -293,6 +294,59 @@ const Wallet={
   get decos(){return store.get('decos',[])},
   toggleDeco(id){let d=this.decos;if(d.includes(id))d=d.filter(x=>x!==id);else{if(d.length>=MAX_DECOS)return false;d=[...d,id]}store.set('decos',d);return true},
 };
+/* ---- comunidade online (Firebase Realtime Database via REST) */
+const Cloud=(()=>{
+  const DB='https://quebra-cabeca-d14c9-default-rtdb.firebaseio.com',KEY='AIzaSyBU7Ax1oSGuUrOSi3Uy7ZlRaOYKxDpzjoo';
+  let tok=null,exp=0;
+  const js=async(m,u,b)=>{const r=await fetch(u,{method:m,headers:b?{'Content-Type':'application/json'}:undefined,body:b});const t=await r.text();if(!r.ok)throw new Error(r.status+' '+t);return t};
+  async function auth(){
+    if(tok&&Date.now()<exp)return tok;
+    try{
+      let r;const rt=store.get('cloud_refresh',null);
+      if(rt){r=JSON.parse(await js('POST','https://securetoken.googleapis.com/v1/token?key='+KEY,JSON.stringify({grant_type:'refresh_token',refresh_token:rt})));tok=r.id_token;store.set('cloud_refresh',r.refresh_token)}
+      else{r=JSON.parse(await js('POST','https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+KEY,'{"returnSecureToken":true}'));tok=r.idToken;store.set('cloud_refresh',r.refreshToken);store.set('cloud_uid',r.localId)}
+      exp=Date.now()+3300000;return tok;
+    }catch(e){return null}
+  }
+  const uid=()=>{let u=store.get('cloud_uid',null);if(!u){u='local_'+Math.random().toString(36).slice(2,14);store.set('cloud_uid',u)}return u};
+  async function db(m,path,body,extra){const t=await auth();const q=[t?'auth='+t:'',extra||''].filter(Boolean).join('&');return js(m,DB+'/'+path+'.json'+(q?'?'+q:''),body)}
+  return{
+    uid,
+    async init(){await auth();return uid()},
+    async publish(d){const r=JSON.parse(await db('POST','decos',JSON.stringify({name:d.name,price:d.price,author:d.author,authorUid:uid(),created:Date.now(),sales:0,img:d.url.split(',')[1]})));return r.name},
+    async list(){const t=await db('GET','decos',null,'orderBy=%22%24key%22&limitToLast=60');if(!t||t==='null')return[];const o=JSON.parse(t);return Object.keys(o).sort().reverse().map(k=>({id:k,...o[k]}))},
+    async sale(d){if(d.price>0&&d.authorUid)await db('POST','earnings/'+d.authorUid,JSON.stringify({amount:d.price,deco:d.id,t:Date.now()}));await db('PUT','decos/'+d.id+'/sales','{".sv":{"increment":1}}')},
+    async claim(){await auth();const p='earnings/'+uid(),t=await db('GET',p);if(!t||t==='null')return 0;const o=JSON.parse(t);let n=0;for(const k in o){n+=o[k].amount||0;await db('DELETE',p+'/'+k)}if(n)Wallet.add(n);return n},
+  };
+})();
+async function loadCommunity(){
+  const box=$('#shopComm');if(!box)return;box.innerHTML='<div class="item"><b style="font-size:14px">Carregando…</b></div>';
+  let list;try{list=await Cloud.list();Cloud.claim().then(n=>{if(n)toast('Você ganhou '+n+' moedas com vendas!')}).catch(()=>{})}
+  catch(e){box.innerHTML='<div class="item"><b style="font-size:14px">Sem conexão com a comunidade.</b><button class="tonal" id="commRetry">Atualizar</button></div>';$('#commRetry').onclick=loadCommunity;return}
+  box.innerHTML='';
+  if(!list.length){box.innerHTML='<div class="item"><b style="font-size:14px">Ainda não há decorações. Publique a primeira!</b></div>';return}
+  const mine=Cloud.uid();
+  list.forEach(d=>{
+    const have=customs().some(c=>c.cloud===d.id),own=d.authorUid===mine,el=document.createElement('div');el.className='item';
+    el.innerHTML=`<div class="pic"><img src="data:image/png;base64,${d.img}"></div><b style="font-size:14px">${esc(d.name)}</b><small style="opacity:.7;display:block">por ${esc(d.author||'anônimo')} · ${d.price} moedas · vendas: ${d.sales||0}</small><button class="${own||have?'tonal':''}" ${own||have?'disabled':''}>${own?'Sua':have?'Você tem':'Comprar'}</button>`;
+    el.querySelector('button').onclick=()=>{
+      if(Wallet.coins<d.price)return toast('Moedas insuficientes.');
+      Wallet.add(-d.price);const id='com_'+d.id;
+      store.set('custom',[...customs(),{id,name:d.name,price:d.price,url:'data:image/png;base64,'+d.img,created:Date.now(),sales:0,author:d.author||'anônimo',cloud:d.id}]);
+      store.set('owned',[...Wallet.owned,id]);if(Wallet.decos.length<MAX_DECOS)store.set('decos',[...Wallet.decos,id]);
+      toast('Comprada! Já está na sua mesa.');Cloud.sale(d).catch(()=>{});showShop();loadCommunity();
+    };
+    box.appendChild(el);
+  });
+}
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function publishDeco(c){
+  let a=store.get('creator',null);if(!a){a=(prompt('Seu nome de criador')||'').trim()||'Anônimo';store.set('creator',a)}
+  toast('Publicando…');
+  try{const id=await Cloud.publish({name:c.name,price:c.price,author:a,url:c.url});store.set('custom',customs().map(x=>x.id===c.id?{...x,cloud:id}:x));toast('Publicada na comunidade!')}
+  catch(e){toast('Não consegui publicar. Verifique a internet.')}
+  showShop();loadCommunity();
+}
 const PROMO={mingau123:1000};
 function redeemPromo(){
   const c=(prompt('Digite o código promocional')||'').trim().toLowerCase();if(!c)return;
@@ -322,7 +376,7 @@ function openDraw(){
 }
 function updateCoins(){const t='🪙 '+Wallet.coins;$('#hCoins').textContent=t;$('#shopCoins').textContent=t}
 function showShop(){
-  show('shop');updateCoins();$('#promoBtn').onclick=redeemPromo;
+  show('shop');updateCoins();$('#promoBtn').onclick=redeemPromo;if(!window.__commLoaded){window.__commLoaded=1;setTimeout(()=>{window.__commLoaded=0},15000);loadCommunity()}
   const mk=(it)=>{
     const own=Wallet.has(it.id),d=document.createElement('div');d.className='item';
     const pic=it.table?`<div class="pic" style="background:${it.color}"></div>`:`<div class="pic"><img src="${it.url||'data:image/png;base64,'+DRAW[it.img]}"></div>`;
@@ -349,7 +403,9 @@ function showShop(){
   const my=$('#shopMine');my.innerHTML='';
   const nd=document.createElement('div');nd.className='item';nd.innerHTML='<div class="pic" style="display:flex;align-items:center;justify-content:center;font-size:34px">✏️</div><b style="font-size:14px">Desenhar nova decoração</b><button>Desenhar</button>';
   nd.querySelector('button').onclick=openDraw;my.appendChild(nd);
-  customs().forEach(c=>{const it=allShop().find(x=>x.id===c.id),d=mk(it);d.querySelector('b').insertAdjacentHTML('afterend',`<small style="opacity:.7;display:block">${c.price} moedas · vendas: ${c.sales||0} · ${new Date(c.created).toLocaleDateString('pt-BR')}</small>`);my.appendChild(d)});
+  customs().forEach(c=>{const it=allShop().find(x=>x.id===c.id),d=mk(it);d.querySelector('b').insertAdjacentHTML('afterend',`<small style="opacity:.7;display:block">${c.author?'Comprada de '+esc(c.author)+' · ':''}${c.price} moedas · ${new Date(c.created).toLocaleDateString('pt-BR')}${!c.author&&c.cloud?' · publicada ✔':''}</small>`);
+    if(!c.author&&!c.cloud){const pb=document.createElement('button');pb.className='tonal';pb.textContent='Publicar';pb.onclick=()=>publishDeco(c);d.appendChild(pb)}
+    my.appendChild(d)});
 }
 
 /* ============================================================ banco (IndexedDB) */
