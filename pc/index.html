@@ -110,7 +110,7 @@ input[type=checkbox].sw:checked::after{left:21px}
 <div id="home" class="screen on">
   <div class="top">
     <button class="burger" id="hBurger" title="Menu">☰</button>
-    <h1>Quebra-Cabeça<small>Escolha uma imagem e monte do seu jeito</small></h1><button class="tonal" id="hShop" style="margin-left:auto">🛍 Loja</button><span class="coin" id="hCoins"></span>
+    <h1>Quebra-Cabeça<small>Escolha uma imagem e monte do seu jeito</small></h1><button class="tonal" id="hJoin" style="margin-left:auto">👥 Entrar em sala</button><button class="tonal" id="hShop" style="margin-left:8px">🛍 Loja</button><span class="coin" id="hCoins"></span>
   </div>
   <div class="stage">
     <div class="pv" id="pv">
@@ -316,6 +316,10 @@ const Cloud=(()=>{
     async publish(d){const r=JSON.parse(await db('POST','decos',JSON.stringify({name:d.name,price:d.price,author:d.author,authorUid:uid(),created:Date.now(),sales:0,img:d.url.split(',')[1]})));return r.name},
     async list(){const t=await db('GET','decos',null,'orderBy=%22%24key%22&limitToLast=60');if(!t||t==='null')return[];const o=JSON.parse(t);return Object.keys(o).sort().reverse().map(k=>({id:k,...o[k]}))},
     async sale(d){if(d.price>0&&d.authorUid)await db('POST','earnings/'+d.authorUid,JSON.stringify({amount:d.price,deco:d.id,t:Date.now()}));await db('PUT','decos/'+d.id+'/sales','{".sv":{"increment":1}}')},
+    async roomCreate(code,o){await db('PUT','rooms/'+code,JSON.stringify(o))},
+    async roomGet(code){const t=await db('GET','rooms/'+code);return t&&t!=='null'?JSON.parse(t):null},
+    async roomPush(code,g){await db('POST','rooms/'+code+'/moves',JSON.stringify({by:uid(),g,t:Date.now()}))},
+    async roomPoll(code,after){const t=await db('GET','rooms/'+code+'/moves',null,'orderBy=%22%24key%22'+(after?'&startAt=%22'+after+'%22':''));if(!t||t==='null')return[];const o=JSON.parse(t);return Object.keys(o).sort().filter(k=>k!==after).map(k=>({key:k,by:o[k].by,g:o[k].g}))},
     async claim(){await auth();const p='earnings/'+uid(),t=await db('GET',p);if(!t||t==='null')return 0;const o=JSON.parse(t);let n=0;for(const k in o){n+=o[k].amount||0;await db('DELETE',p+'/'+k)}if(n)Wallet.add(n);return n},
   };
 })();
@@ -348,6 +352,11 @@ async function publishDeco(c){
   showShop();loadCommunity();
 }
 const PROMO={mingau123:1000};
+$('#hJoin').onclick=async()=>{
+  const code=(prompt('Código da sala (5 caracteres)')||'').trim().toUpperCase();if(!code)return;
+  if(code[0]==='A')return toast('Essa sala é do Android. Entre pelo celular.');
+  try{toast('Entrando na sala…');const id=await Game.joinRoom(code);Game.open(id)}catch(e){toast('Sala não encontrada. Confira o código e a internet.')}
+};
 function redeemPromo(){
   const c=(prompt('Digite o código promocional')||'').trim().toLowerCase();if(!c)return;
   if(PROMO[c]){Wallet.add(PROMO[c]);toast('Código aceito! +'+PROMO[c]+' moedas')}else toast('Código inválido.');
@@ -719,7 +728,7 @@ const Game=(()=>{
 
   /* ---- montar peças */
   async function build(){
-    const iw=img.width,ih=img.height;[rows,cols]=gridFor(rec.count>0?rec.count:48,iw,ih);
+    const iw=img.width,ih=img.height;[rows,cols]=rec.rc||gridFor(rec.count>0?rec.count:48,iw,ih);
     cell=Math.max(26,Math.min(150,Math.floor(Math.sqrt(iw*ih/(rows*cols)))));
     margin=Math.ceil(marginFactor(rec.style)*cell);boardW=cols*cell;boardH=rows*cell;
     geo=new Geo(rows,cols,cell,rec.seed,rec.style);
@@ -1081,7 +1090,7 @@ const Game=(()=>{
     else if(drag){translate(drag.g,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(drag.g);for(const x of drag.extras){translate(x,(rx-drag.lx)/scale,(ry-drag.ly)/scale);keepInWorld(x)}drag.lx=rx;drag.ly=ry;drag.moved=true;requestFrame()}
     else if(pan){if(Math.hypot(rx-pan.sx,ry-pan.sy)>5)pan.moved=true;tx+=rx-pan.lx;ty+=ry-pan.ly;pan.lx=rx;pan.ly=ry;clamp();redraw()}
   });
-  function settleAfterRot(p){const res=settle(p.g);if(res)remask(res);logMove();afterChange();redraw()}
+  function settleAfterRot(p){const res=settle(p.g);if(res)remask(res);logMove();afterChange();redraw();roomSend([p])}
   const up=()=>{
     if(decoDrag){
       if(!decoDrag.moved){
@@ -1104,11 +1113,12 @@ const Game=(()=>{
       selDrag=null;selRect=null;redraw();return;
     }
     if(drag){
-      const g=drag.g,extras=drag.extras,wasClick=!drag.moved&&!drag.extras.length;drag=null;
+      const g=drag.g,extras=drag.extras,moved0=[...g.pieces,...extras.flatMap(e=>e.pieces)],wasClick=!drag.moved&&!drag.extras.length;drag=null;
       if(wasClick&&rec.rotate&&g.pieces.length===1&&!g.locked){g.pieces[0].rot=(g.pieces[0].rot+1)%4;beep([400],.05)}else if(!wasClick)st.moves++;
       const res=settle(g);for(const x of extras){if(groups.includes(x)){const r2=settle(x);if(r2)remask(r2)}}if(extras.length)sel=[];logMove();
       if(res){remask(res);beep(res.locked?[660,990]:[520],res.locked?.12:.07)}
       afterChange();redraw();
+      roomSend(moved0);
     }
     pan=null;
   };
@@ -1248,7 +1258,7 @@ const Game=(()=>{
     const im=new Image();im.src=URL.createObjectURL(rec.blob);im.style.cssText='max-width:78vw;max-height:66vh;border-radius:12px;display:block';$('#msgB').appendChild(im);
     const a=$('#msgA');a.innerHTML='';const b=document.createElement('button');b.textContent='Fechar';b.onclick=()=>m.classList.remove('on');a.appendChild(b);m.classList.add('on');
   }
-  function arrangeNow(){arrange();logMove();updateHud();redraw();persist()}
+  function arrangeNow(){arrange();logMove();updateHud();redraw();persist();if(room)roomSend(pieces)}
   function useHint(){
     if(completed)return;if(Wallet.coins<HINT_COST)return toast('Dica custa '+HINT_COST+' moedas. Conclua puzzles para ganhar mais.');let best=null;
     for(const p of pieces)for(const[dr,dc]of NB){
@@ -1292,6 +1302,7 @@ const Game=(()=>{
       {ic:'🖼',t:'Ver imagem completa (P)',f:preview},
       {ic:'📈',t:'Estatísticas',f:showStats},
       {ic:'🪴',t:'Arrumar a mesa (decorações)',f:()=>setDecor(true)},
+      {ic:'👥',t:'Jogar junto (criar sala)',f:()=>{closeDrawer();createRoom()}},
       '-',
       {ic:'▭',t:'Mostrar só as peças de borda',sw:1,on:edgesOnly,f:v=>{edgesOnly=v;redraw()}},
       {ic:'◩',t:'Imagem de fundo no tabuleiro',sw:1,on:showGhost,f:v=>{showGhost=v;redraw()}},
@@ -1311,6 +1322,73 @@ const Game=(()=>{
   $('#gShop').onclick=async()=>{await persist();showShop()};$('#gMenu').onclick=menu;$('#gArr').onclick=arrangeNow;$('#gHint').onclick=useHint;
 
   /* ---- ciclo de vida */
+  /* ---- jogar junto (salas) */
+  let room=null,roomT=null,pushQ=Promise.resolve();
+  const org=()=>pieces.length?[solvedX(pieces[0]),solvedY(pieces[0])]:[0,0];
+  function exportPieces(list){
+    const [ox,oy]=org(),seen=new Set(),out=[],lk=[];
+    const ent=p=>[p.i,Math.round((p.x-ox)/cell*1e4)/1e4,Math.round((p.y-oy)/cell*1e4)/1e4,p.rot||0];
+    for(const p of list){
+      if(p.g===lockedG){lk.push(ent(p));continue}
+      if(seen.has(p.g))continue;seen.add(p.g);out.push({locked:false,p:p.g.pieces.map(ent)});
+    }
+    if(lk.length)out.push({locked:true,p:lk});
+    return JSON.stringify(out);
+  }
+  function roomSend(list){if(!room)return;const code=room.code,g=exportPieces(list);pushQ=pushQ.then(()=>Cloud.roomPush(code,g)).catch(()=>{})}
+  function applyRemote(json){
+    if(!active||completed||!pieces.length)return;
+    try{
+      const [ox,oy]=org(),busy=new Set();
+      if(drag){for(const p of drag.g.pieces)busy.add(p.i);for(const e of drag.extras)for(const p of e.pieces)busy.add(p.i)}
+      const touched=new Set();
+      for(const go of JSON.parse(json)){
+        if(go.p.some(e=>!pieces[e[0]]||busy.has(e[0])))continue;
+        const ng=go.locked?lockedG:{pieces:[],locked:false};
+        for(const e of go.p){
+          const p=pieces[e[0]],old=p.g;
+          if(old&&old!==ng){old.pieces=old.pieces.filter(q=>q!==p);if(!old.pieces.length&&old!==lockedG)groups=groups.filter(x=>x!==old);else touched.add(old)}
+          p.x=ox+e[1]*cell;p.y=oy+e[2]*cell;p.rot=e[3]||0;
+          if(old!==ng){p.g=ng;ng.pieces.push(p)}
+        }
+        if(!go.locked)groups.push(ng);touched.add(ng);
+      }
+      for(const g of touched)if(g.pieces.length)remask(g);
+      afterChange();redraw();
+    }catch(e){console.error(e)}
+  }
+  function startRoom(code){
+    if(room&&room.code===code)return;
+    room={code,last:null};clearInterval(roomT);
+    const me=Cloud.uid();
+    roomT=setInterval(async()=>{
+      if(!active||!room)return;
+      try{const ms=await Cloud.roomPoll(code,room.last);if(ms.length){room.last=ms[ms.length-1].key;for(const m of ms)if(m.by!==me)applyRemote(m.g)}}catch(e){}
+    },1500);
+  }
+  const stopRoom=()=>{clearInterval(roomT);room=null};
+  async function createRoom(){
+    await Cloud.init();
+    if(room){showRoomCode(room.code);return}
+    toast('Criando sala…');
+    const abc='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let code='P';for(let i=0;i<4;i++)code+=abc[Math.floor(Math.random()*abc.length)];
+    try{
+      const k=Math.min(1,1280/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      const [ox,oy]=org();
+      await Cloud.roomCreate(code,{host:Cloud.uid(),created:Date.now(),count:rec.count,style:rec.style,seed:rec.seed,rotate:!!rec.rotate,rows,cols,img:c.toDataURL('image/jpeg',.85).split(',')[1],state:exportAll()});
+      startRoom(code);rec.room=code;persist();showRoomCode(code);
+    }catch(e){toast('Não consegui criar a sala. Verifique a internet.')}
+  }
+  function exportAll(){
+    const [ox,oy]=org(),ent=p=>[p.i,Math.round((p.x-ox)/cell*1e4)/1e4,Math.round((p.y-oy)/cell*1e4)/1e4,p.rot||0];
+    const out=groups.filter(g=>g.pieces.length).map(g=>({locked:false,p:g.pieces.map(ent)}));
+    if(lockedG.pieces.length)out.push({locked:true,p:lockedG.pieces.map(ent)});
+    return JSON.stringify(out);
+  }
+  function showRoomCode(code){
+    const m=$('#mMsg');$('#msgT').textContent='Sala '+code;$('#msgB').textContent='Peça para seus amigos abrirem o jogo, clicarem em "Entrar em sala" na tela inicial e digitarem o código '+code+'. (Só funciona entre quem usa a versão de PC.)';
+    const a=$('#msgA');a.innerHTML='';const b=document.createElement('button');b.className='tonal';b.textContent='Copiar código';b.onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(code);toast('Copiado!')};const c=document.createElement('button');c.textContent='Fechar';c.onclick=()=>m.classList.remove('on');a.append(b,c);m.classList.add('on');
+  }
   async function open(id){
     $('#loading').textContent='Preparando as peças…';$('#loading').classList.add('on');
     try{
@@ -1323,7 +1401,9 @@ const Game=(()=>{
       st.moves=rec.stats?.moves||0;st.snaps=rec.stats?.snaps||0;st.hints=rec.stats?.hints||0;
       elapsedBase=rec.elapsed||0;runStart=0;completed=false;timeUpShown=false;edgesOnly=false;showGhost=true;hint=null;
       if(rec.state&&restore(rec.state)){if(rec.log&&rec.init)lastPos=pieces.map(p=>[p.x,p.y,p.rot||0]);else rec.log=null}else{makeSingles();settings.arrange?arrange():scatter();randomRot();initLog()}
+      if(rec.roomInit&&!rec.state){applyRemote(rec.roomInit);rec.roomInit=null}
       setHud(true);fit();updateHud();startClock();
+      if(rec.room)startRoom(rec.room);else stopRoom();
       clearInterval(tickT);tickT=setInterval(()=>{if(active&&!completed){updateHud()}},1000);
       clearInterval(saveT);saveT=setInterval(()=>persist(),12000);
       pet.init=false;Ambient.apply();
@@ -1333,7 +1413,7 @@ const Game=(()=>{
   }
   function leave(){
     if(!active)return;
-    persist();Ambient.stop();decorMode=false;$('#decorDone').style.display='none';active=false;stopClock();clearInterval(tickT);clearInterval(saveT);
+    persist();stopRoom();Ambient.stop();decorMode=false;$('#decorDone').style.display='none';active=false;stopClock();clearInterval(tickT);clearInterval(saveT);
     pieces=[];groups=[];hint=null;
   }
   async function again(p){
@@ -1342,7 +1422,7 @@ const Game=(()=>{
   }
   document.addEventListener('visibilitychange',()=>{if(!active)return;if(document.hidden){stopClock();persist();Ambient.stop()}else{if(!completed)startClock();Ambient.apply()}});
   addEventListener('beforeunload',()=>{persist()});
-  return {open,leave,again,get state(){return {pieces,groups,lockedG,scale,tx,ty,cell,boardX,boardY}},_test:{settle,translate,get lockedG(){return lockedG}}};
+  return {open,leave,again,joinRoom:async code=>{await Cloud.init();const r=await Cloud.roomGet(code);if(!r)throw new Error('none');const bin=atob(r.img),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);const blob=new Blob([u],{type:'image/jpeg'});const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(blob)});const nrec={id:String(Date.now()),blob,thumb:makeThumb(im),count:r.count,style:r.style,seed:r.seed,timed:false,rotate:!!r.rotate,rc:[r.rows,r.cols],room:code,roomInit:r.state,state:null,percent:0,completed:false,elapsed:0,updated:Date.now(),stats:{moves:0,snaps:0,hints:0}};await DB.put(nrec);return nrec.id},get state(){return {pieces,groups,lockedG,scale,tx,ty,cell,boardX,boardY}},_test:{settle,translate,get lockedG(){return lockedG}}};
 })();
 
 updateCoins();refreshPreview();
